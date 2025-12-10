@@ -241,12 +241,12 @@ Authorization: Bearer YOUR_JWT_TOKEN
 
 #### Get All Vendors
 ```http
-GET /api/admin/vendors?verification_status=pending&city=Mumbai&page=1&limit=10
+GET /api/admin/vendors?status=pending&city=Mumbai&page=1&limit=10
 Authorization: Bearer YOUR_JWT_TOKEN
 ```
 
 Query Parameters:
-- `verification_status`: pending, approved, rejected
+- `status`: pending, approved, rejected
 - `city`: Filter by city
 - `search`: Search in name, shop name, phone
 - `page`: Page number
@@ -272,7 +272,7 @@ Authorization: Bearer YOUR_JWT_TOKEN
 Content-Type: application/json
 
 {
-  "verification_status": "approved", // or "rejected"
+  "status": "approved", // or "rejected"
   "admin_comments": "All documents verified successfully"
 }
 ```
@@ -284,7 +284,7 @@ Authorization: Bearer YOUR_JWT_TOKEN
 Content-Type: application/json
 
 {
-  "verification_status": "approved", // or "rejected"
+  "status": "approved", // or "rejected"
   "admin_comments": "Document is clear and valid"
 }
 ```

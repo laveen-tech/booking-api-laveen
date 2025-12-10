@@ -169,7 +169,7 @@ Body: {
 PUT /api/admin/vendors/{vendor_id}/verification
 Headers: Authorization: Bearer ADMIN_TOKEN
 Body: {
-  "verification_status": "approved",
+  "status": "approved",
   "admin_comments": "All documents verified"
 }
 ```
@@ -177,7 +177,7 @@ Body: {
 ### Get Pending Vendors
 
 ```bash
-GET /api/admin/vendors?verification_status=pending
+GET /api/admin/vendors?status=pending
 Headers: Authorization: Bearer ADMIN_TOKEN
 ```
 

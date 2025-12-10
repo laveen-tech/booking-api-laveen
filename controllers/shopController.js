@@ -7,7 +7,7 @@ const db = require('../config/database');
 // Get all shops with filters
 const getAllShops = async (req, res) => {
   try {
-    const { verification_status, city, search, page = 1, limit = 10 } = req.query;
+    const { status, city, search, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
     let query = `
@@ -25,9 +25,9 @@ const getAllShops = async (req, res) => {
     const params = [];
     let paramCount = 1;
 
-    if (verification_status) {
-      query += ` AND vs.verification_status = $${paramCount}`;
-      params.push(verification_status);
+    if (status) {
+      query += ` AND vs.status = $${paramCount}`;
+      params.push(status);
       paramCount++;
     }
 
@@ -184,7 +184,7 @@ const createShop = async (req, res) => {
         break_start_time, break_end_time, weekly_holiday,
         no_of_seats, no_of_workers, business_license,
         tax_number, bank_account_number, bank_ifsc_code,
-        verification_status, status
+        status, status
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', 'active')
       RETURNING shop_id`,
       [
@@ -334,12 +334,12 @@ const deleteShop = async (req, res) => {
 const updateShopVerification = async (req, res) => {
   try {
     const { id } = req.params;
-    const { verification_status, admin_comments } = req.body;
+    const { status, admin_comments } = req.body;
     const verifiedBy = req.user.userId;
 
-    console.log('Updating shop verification:', { id, verification_status, admin_comments, verifiedBy });
+    console.log('Updating shop verification:', { id, status, admin_comments, verifiedBy });
 
-    if (!['pending', 'approved', 'rejected'].includes(verification_status)) {
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid verification status. Must be pending, approved, or rejected.'
@@ -362,21 +362,21 @@ const updateShopVerification = async (req, res) => {
     // Update verification
     const result = await db.query(
       `UPDATE vendor_shop_details 
-       SET verification_status = $1, 
+       SET status = $1, 
            admin_comments = $2, 
            verified_by = $3, 
            verified_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE shop_id = $4
        RETURNING *`,
-      [verification_status, admin_comments, verifiedBy, id]
+      [status, admin_comments, verifiedBy, id]
     );
 
     console.log('Shop verification updated:', result.rows[0]);
 
     res.json({
       success: true,
-      message: `Shop ${verification_status} successfully.`,
+      message: `Shop ${status} successfully.`,
       data: result.rows[0]
     });
 

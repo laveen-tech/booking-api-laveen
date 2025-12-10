@@ -1,80 +1,65 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
-// Verify JWT token
+// Verify JWT
 const verifyToken = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1]; // Bearer TOKEN
+    const token = req.headers.authorization?.split(' ')[1];
 
     if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. No token provided.'
-      });
+      return res.status(401).json({ success: false, message: 'No token provided' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Check if user still exists and is active
+
     const result = await db.query(
-      'SELECT user_id, role, status FROM users WHERE user_id = $1',
+      'SELECT user_id, user_type, status FROM users WHERE user_id = $1',
       [decoded.userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not found.'
-      });
+      return res.status(401).json({ success: false, message: 'User not found' });
     }
 
     if (result.rows[0].status !== 'active') {
-      return res.status(401).json({
-        success: false,
-        message: 'User account is inactive.'
-      });
+      return res.status(401).json({ success: false, message: 'User inactive' });
     }
 
     req.user = {
       userId: decoded.userId,
-      userType: result.rows[0].role
+      userType: result.rows[0].user_type   // ✅ FIXED
     };
 
     next();
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token.'
-      });
-    }
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({
-        success: false,
-        message: 'Token expired.'
-      });
-    }
+  } catch (err) {
     return res.status(500).json({
       success: false,
-      message: 'Internal server error.'
+      message: 'Token validation error',
+      error: err.message
     });
   }
 };
 
+
 // Check if user is admin or superadmin
+// Admin guard
 const isAdmin = (req, res, next) => {
-  if (req.user.userType !== 'admin' && req.user.userType !== 'superadmin') {
+  const role = req.user.userType?.toUpperCase();  // ✅ FIXED
+
+  if (role !== 'ADMIN' && role !== 'SUPERADMIN') {
     return res.status(403).json({
       success: false,
-      message: 'Access denied. Admin privileges required.'
+      message: 'Admin privileges required'
     });
   }
+
   next();
 };
 
 // Check if user is superadmin
 const isSuperAdmin = (req, res, next) => {
-  if (req.user.userType !== 'superadmin') {
+  const role = req.user.userType?.toUpperCase();
+  if (role !== 'SUPERADMIN') {
     return res.status(403).json({
       success: false,
       message: 'Access denied. Super admin privileges required.'
@@ -85,7 +70,7 @@ const isSuperAdmin = (req, res, next) => {
 
 // Check if user is vendor
 const isVendor = (req, res, next) => {
-  if (req.user.userType !== 'vendor') {
+  if (req.user.userType !== 'VENDOR') {
     return res.status(403).json({
       success: false,
       message: 'Access denied. Vendor privileges required.'

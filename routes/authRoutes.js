@@ -7,11 +7,11 @@ const { verifyToken } = require('../middleware/auth');
 // PUBLIC ROUTES - OTP BASED
 // ============================================
 
-// Send OTP (Firebase handles this on client side)
-router.post('/send-otp', authController.sendOTP);
+// // Send OTP (Firebase handles this on client side)
+// router.post('/send-otp', authController.sendOTP);
 
-// Verify OTP and Register/Login
-router.post('/verify-otp', authController.verifyOTP);
+// // Verify OTP and Register/Login
+// router.post('/verify-otp', authController.verifyOTP);
 
 // ============================================
 // PUBLIC ROUTES - TRADITIONAL (Optional)
@@ -31,6 +31,6 @@ router.get('/profile', verifyToken, authController.getProfile);
 router.put('/profile', verifyToken, authController.updateProfile);
 
 // Logout
-router.post('/logout', verifyToken, authController.logout);
+// router.post('/logout', verifyToken, authController.logout);
 
 module.exports = router;

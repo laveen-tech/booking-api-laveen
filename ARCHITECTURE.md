@@ -104,7 +104,7 @@
 │  • break_start_time, break_end_time                         │
 │  • weekly_holiday                                           │
 │  • no_of_seats, no_of_workers                               │
-│  • verification_status ⚡ (pending/approved/rejected)       │
+│  • status ⚡ (pending/approved/rejected)       │
 │  • admin_comments                                           │
 │  • verified_by (FK → users)                                 │
 │  • verified_at                                              │
@@ -139,7 +139,7 @@
 │  • document_url                                             │
 │  • document_type (shop_image/license/tax_cert/id_proof)    │
 │  • is_primary                                               │
-│  • verification_status (pending/approved/rejected)          │
+│  • status (pending/approved/rejected)          │
 │  • admin_comments                                           │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -350,7 +350,7 @@ High Priority Indexes (Already Created):
   • users.email (UNIQUE)
   • users.user_type
   • user_profiles(user_id, is_current)
-  • vendor_shop_details.verification_status
+  • vendor_shop_details.status
   • vendor_documents.vendor_id
   • bookings.vendor_id
   • bookings.booking_date

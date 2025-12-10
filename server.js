@@ -16,7 +16,7 @@ app.use('/uploads', express.static('uploads'));
 
 // Import Routes
 const authRoutes = require('./routes/authRoutes');
-const vendorRoutes = require('./routes/vendorRoutes');
+const vendorRoutes = require('./routes/vendorRoute');
 const adminRoutes = require('./routes/adminRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 // const vendorRoutes = require('./routes/app/apiVendorRoutes');

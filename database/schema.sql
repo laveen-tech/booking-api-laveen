@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS public.vendor_shop_details
     weekly_holiday character varying(10) COLLATE pg_catalog."default",
     no_of_seats integer NOT NULL DEFAULT 1,
     no_of_workers integer NOT NULL DEFAULT 1,
-    verification_status character varying(20) COLLATE pg_catalog."default" DEFAULT 'pending'::character varying,
+    status character varying(20) COLLATE pg_catalog."default" DEFAULT 'pending'::character varying,
     -- Options: pending, approved, rejected
     admin_comments text COLLATE pg_catalog."default",
     verified_at timestamp without time zone,
@@ -115,11 +115,11 @@ CREATE TABLE IF NOT EXISTS public.vendor_shop_details
         REFERENCES public.users (user_id) MATCH SIMPLE
         ON UPDATE NO ACTION
         ON DELETE SET NULL,
-    CONSTRAINT check_verification_status CHECK (verification_status IN ('pending', 'approved', 'rejected'))
+    CONSTRAINT check_status CHECK (status IN ('pending', 'approved', 'rejected'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_vendor_shops_user_id ON public.vendor_shop_details(user_id);
-CREATE INDEX IF NOT EXISTS idx_vendor_shops_verification_status ON public.vendor_shop_details(verification_status);
+CREATE INDEX IF NOT EXISTS idx_vendor_shops_status ON public.vendor_shop_details(status);
 CREATE INDEX IF NOT EXISTS idx_vendor_shops_city ON public.vendor_shop_details(city);
 
 -- ============================================
@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS public.vendor_documents
     document_type character varying(50) COLLATE pg_catalog."default" NOT NULL,
     -- Options: shop_image, license, tax_certificate, id_proof, etc.
     is_primary boolean DEFAULT false,
-    verification_status character varying(20) COLLATE pg_catalog."default" DEFAULT 'pending'::character varying,
+    status character varying(20) COLLATE pg_catalog."default" DEFAULT 'pending'::character varying,
     admin_comments text COLLATE pg_catalog."default",
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS public.vendor_documents
         REFERENCES public.users (user_id) MATCH SIMPLE
         ON UPDATE CASCADE
         ON DELETE CASCADE,
-    CONSTRAINT check_document_verification_status CHECK (verification_status IN ('pending', 'approved', 'rejected'))
+    CONSTRAINT check_document_status CHECK (status IN ('pending', 'approved', 'rejected'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_vendor_documents_vendor_id ON public.vendor_documents(vendor_id);

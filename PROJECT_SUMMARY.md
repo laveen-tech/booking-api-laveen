@@ -106,7 +106,7 @@ verification_documents (document_id, vendor_id, document_type, document_url, ...
 ```sql
 vendor_documents (
     document_id, vendor_id, document_url, document_type,
-    is_primary, verification_status, admin_comments, ...
+    is_primary, status, admin_comments, ...
 )
 ```
 
@@ -309,17 +309,7 @@ curl -X GET http://localhost:5000/api/admin/users \
 2. **Test with Postman** (10 minutes)
 3. **Understand the API** (20 minutes)
 
-### Future Enhancements:
-1. Vendor document upload endpoints
-2. Vendor shop management endpoints
-3. Booking management for customers
-4. Review system completion
-5. Notification system
-6. Analytics and reporting
-7. File upload handling (multer)
-8. Email notifications
-9. SMS integration
-10. Payment gateway integration
+ 
 
 ## 💡 Why This Implementation is Better
 

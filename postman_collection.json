@@ -310,7 +310,7 @@
               "path": ["admin", "vendors"],
               "query": [
                 {
-                  "key": "verification_status",
+                  "key": "status",
                   "value": "pending",
                   "disabled": true
                 },
@@ -369,7 +369,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"verification_status\": \"approved\",\n  \"admin_comments\": \"All documents verified successfully. Shop approved.\"\n}"
+              "raw": "{\n  \"status\": \"approved\",\n  \"admin_comments\": \"All documents verified successfully. Shop approved.\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/vendors/3/verification",
@@ -394,7 +394,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"verification_status\": \"rejected\",\n  \"admin_comments\": \"Documents are not clear. Please resubmit.\"\n}"
+              "raw": "{\n  \"status\": \"rejected\",\n  \"admin_comments\": \"Documents are not clear. Please resubmit.\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/vendors/3/verification",
@@ -419,7 +419,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"verification_status\": \"approved\",\n  \"admin_comments\": \"Document is valid and clear.\"\n}"
+              "raw": "{\n  \"status\": \"approved\",\n  \"admin_comments\": \"Document is valid and clear.\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/documents/1/verification",
@@ -444,7 +444,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"verification_status\": \"rejected\",\n  \"admin_comments\": \"Document is not clear. Please upload a better quality image.\"\n}"
+              "raw": "{\n  \"status\": \"rejected\",\n  \"admin_comments\": \"Document is not clear. Please upload a better quality image.\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/documents/1/verification",

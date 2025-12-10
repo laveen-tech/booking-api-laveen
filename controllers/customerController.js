@@ -27,7 +27,7 @@ const getDashboardStats = async (req, res) => {
         b.booking_id,
         b.booking_date,
         b.booking_time,
-        b.total_price,
+        b.total_amount,
         b.booking_status,
         vsd.shop_name,
         vsd.shop_address,
@@ -38,7 +38,7 @@ const getDashboardStats = async (req, res) => {
       INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
-      WHERE b.customer_id = $1 
+      WHERE b.user_id = $1 
         AND b.booking_status = 'confirmed'
         AND b.booking_date >= CURRENT_DATE
         AND b.status = 'active'
@@ -59,7 +59,7 @@ const getDashboardStats = async (req, res) => {
       FROM bookings b
       INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
       LEFT JOIN vendor_metrics vm ON b.vendor_id = vm.vendor_id
-      WHERE b.customer_id = $1 AND b.status = 'active'
+      WHERE b.user_id = $1 AND b.status = 'active'
       GROUP BY b.vendor_id, vsd.shop_name, vsd.city, vm.average_rating, vm.total_reviews
       ORDER BY booking_count DESC
       LIMIT 5`,
@@ -129,8 +129,8 @@ const getAllShops = async (req, res) => {
       LEFT JOIN vendor_metrics vm ON u.user_id = vm.vendor_id
       WHERE u.role = 'vendor' 
         AND u.status = 'active' 
-        AND u.verification_status = 1
-        AND vsd.verification_status = 1
+        AND u.status = 1
+        AND vsd.status = 1
     `;
     
     const params = [];
@@ -244,7 +244,7 @@ const getShopDetails = async (req, res) => {
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
       WHERE vsd.shop_id = $1 
         AND u.status = 'active' 
-        AND u.verification_status = 1
+        AND u.status = 1
     `;
 
     const shop = await db.query(shopQuery, [shopId]);
@@ -477,7 +477,7 @@ const createBooking = async (req, res) => {
 
     // Verify vendor exists and is active
     const vendorCheck = await client.query(
-      'SELECT user_id, verification_status FROM users WHERE user_id = $1 AND role = $2 AND status = $3',
+      'SELECT user_id, status FROM users WHERE user_id = $1 AND role = $2 AND status = $3',
       [vendor_id, 'vendor', 'active']
     );
 
@@ -489,7 +489,7 @@ const createBooking = async (req, res) => {
       });
     }
 
-    if (vendorCheck.rows[0].verification_status !== 1) {
+    if (vendorCheck.rows[0].status !== 1) {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
@@ -553,7 +553,7 @@ const createBooking = async (req, res) => {
         vendor_id,
         booking_date,
         booking_time,
-        total_price,
+        total_amount,
         total_duration_minutes,
         booking_status,
         payment_method,
@@ -562,7 +562,7 @@ const createBooking = async (req, res) => {
         created_at,
         updated_at
       ) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', 'cash', 'pending', $7, NOW(), NOW())
-      RETURNING booking_id, booking_date, booking_time, total_price`,
+      RETURNING booking_id, booking_date, booking_time, total_amount`,
       [customerId, vendor_id, booking_date, booking_time, totalPrice, totalDuration, notes]
     );
 
@@ -663,7 +663,7 @@ const getMyBookings = async (req, res) => {
         b.booking_id,
         b.booking_date,
         b.booking_time,
-        b.total_price,
+        b.total_amount,
         b.booking_status,
         b.payment_status,
         b.customer_notes,
@@ -685,7 +685,7 @@ const getMyBookings = async (req, res) => {
       INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
-      WHERE b.customer_id = $1 AND b.status = 'active'
+      WHERE b.user_id = $1 AND b.status = 'active'
     `;
     
     const params = [customerId];
@@ -757,7 +757,7 @@ const getBookingDetails = async (req, res) => {
       INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
-      WHERE b.booking_id = $1 AND b.customer_id = $2 AND b.status = 'active'`,
+      WHERE b.booking_id = $1 AND b.user_id = $2 AND b.status = 'active'`,
       [bookingId, customerId]
     );
 

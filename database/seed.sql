@@ -107,7 +107,7 @@ INSERT INTO vendor_shop_details (
     user_id, shop_name, shop_address, city, state, 
     latitude, longitude, open_time, close_time,
     break_start_time, break_end_time, weekly_holiday,
-    no_of_seats, no_of_workers, verification_status,
+    no_of_seats, no_of_workers, status,
     admin_comments, verified_by, verified_at,
     business_license, tax_number, bank_account_number, bank_ifsc_code
 )
@@ -180,7 +180,7 @@ ON CONFLICT (vendor_id) DO NOTHING;
 -- VENDOR DOCUMENTS
 -- ============================================
 
-INSERT INTO vendor_documents (vendor_id, document_url, document_type, is_primary, verification_status, admin_comments)
+INSERT INTO vendor_documents (vendor_id, document_url, document_type, is_primary, status, admin_comments)
 VALUES 
 -- Modern Salon
 (6, 'https://example.com/images/salon1_shop.jpg', 'shop_image', true, 'approved', 'Clear image'),
@@ -289,7 +289,7 @@ COMMIT;
 SELECT user_type, COUNT(*) as count FROM users GROUP BY user_type;
 
 -- Check vendors
-SELECT u.user_id, up.name, vs.shop_name, vs.verification_status 
+SELECT u.user_id, up.name, vs.shop_name, vs.status 
 FROM users u
 JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
 LEFT JOIN vendor_shop_details vs ON u.user_id = vs.user_id

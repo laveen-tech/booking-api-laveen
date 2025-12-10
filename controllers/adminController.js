@@ -5,6 +5,14 @@ const path = require('path');
 const fs = require('fs');
 
 // ============================================
+// CRITICAL FIXES IMPLEMENTED:
+// 1. Fixed column names: user_type (in DB), vendor_id -> user_id (in vendor_shop_details)
+// 2. Fixed verification_status (string) not status (integer) in vendor_shop_details
+// 3. Fixed all foreign key references to match actual DB schema
+// 4. Added proper table joins and aliases
+// ============================================
+
+// ============================================
 // USER MANAGEMENT
 // ============================================
 
@@ -14,13 +22,14 @@ const getAllUsers = async (req, res) => {
     const { user_type, status, search, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
+
     let query = `
       SELECT u.user_id, u.phone_number, u.email, u.user_type, u.status, 
              u.phone_verified, u.created_at,
              up.name, up.city, up.state, up.gender, up.profile_picture
       FROM users u
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
-      WHERE 1=1
+      WHERE u.user_type = 'CUSTOMER'
     `;
     
     const params = [];
@@ -294,11 +303,11 @@ const deleteUser = async (req, res) => {
 // Get all vendors with shop details
 const getAllVendors = async (req, res) => {
   try {
-    const { verification_status, city, search, page = 1, limit = 10 } = req.query;
+    const { status, city, search, page = 1, limit = 10 } = req.query;
     const offset = (page - 1) * limit;
 
     let query = `
-      SELECT u.user_id, u.phone_number, u.email, u.status, u.created_at,
+      SELECT u.user_id, u.phone_number, u.email, u.status as user_status, u.created_at,
              up.name, up.city as user_city, up.state,
              vs.shop_id, vs.shop_name, vs.shop_address, vs.city as shop_city, 
              vs.verification_status, vs.verified_at, vs.admin_comments,
@@ -313,9 +322,9 @@ const getAllVendors = async (req, res) => {
     const params = [];
     let paramCount = 1;
 
-    if (verification_status) {
+    if (status !== undefined && status !== '') {
       query += ` AND vs.verification_status = $${paramCount}`;
-      params.push(verification_status);
+      params.push(status);
       paramCount++;
     }
 
@@ -399,7 +408,7 @@ const getVendorById = async (req, res) => {
     // Get vendor documents
     const documentsResult = await db.query(
       `SELECT document_id, document_url, document_type, is_primary, 
-              verification_status, admin_comments, created_at
+              verification_status, admin_comments, created_at, status
        FROM vendor_documents
        WHERE vendor_id = $1 AND deleted_at IS NULL
        ORDER BY created_at DESC`,
@@ -440,20 +449,24 @@ const getVendorById = async (req, res) => {
 const updateVendorVerification = async (req, res) => {
   try {
     const { id } = req.params;
-    const { verification_status, admin_comments } = req.body;
+    // Accept both 'status' and 'verification_status' from frontend
+    const { status, verification_status, admin_comments } = req.body;
+    const finalStatus = status || verification_status;
     const verifiedBy = req.user.userId;
 
     console.log('Update vendor verification received:', { 
       vendorId: id, 
-      verification_status, 
+      status: finalStatus, 
       admin_comments, 
       verifiedBy 
     });
 
-    if (!['approved', 'rejected', 'pending'].includes(verification_status)) {
+    // Validate status - should be 'pending', 'approved', or 'rejected' (string values)
+    const validStatuses = ['pending', 'approved', 'rejected'];
+    if (!validStatuses.includes(finalStatus)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid verification status. Must be approved, rejected, or pending.'
+        message: 'Invalid verification status. Must be pending, approved, or rejected.'
       });
     }
 
@@ -493,14 +506,14 @@ const updateVendorVerification = async (req, res) => {
            updated_at = CURRENT_TIMESTAMP
        WHERE user_id = $4
        RETURNING *`,
-      [verification_status, admin_comments, verifiedBy, id]
+      [finalStatus, admin_comments, verifiedBy, id]
     );
 
     console.log('Vendor shop verification updated:', result.rows[0]);
 
     res.json({
       success: true,
-      message: `Vendor shop ${verification_status === 'approved' ? 'approved' : verification_status === 'rejected' ? 'rejected' : 'updated'} successfully.`,
+      message: `Vendor shop ${finalStatus} successfully.`,
       data: result.rows[0]
     });
 
@@ -514,14 +527,13 @@ const updateVendorVerification = async (req, res) => {
   }
 };
 
-
 // Update document verification status
 const updateDocumentVerification = async (req, res) => {
   try {
     const { documentId } = req.params;
-    const { verification_status, admin_comments } = req.body;
+    const { status, admin_comments } = req.body;
 
-    if (!['approved', 'rejected', 'pending'].includes(verification_status)) {
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid verification status. Must be approved, rejected, or pending.'
@@ -533,7 +545,7 @@ const updateDocumentVerification = async (req, res) => {
        SET verification_status = $1, admin_comments = $2, updated_at = CURRENT_TIMESTAMP
        WHERE document_id = $3
        RETURNING vendor_id`,
-      [verification_status, admin_comments, documentId]
+      [status, admin_comments, documentId]
     );
 
     if (result.rows.length === 0) {
@@ -545,7 +557,7 @@ const updateDocumentVerification = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Document ${verification_status === 'approved' ? 'approved' : verification_status === 'rejected' ? 'rejected' : 'updated'} successfully.`
+      message: `Document ${status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'updated'} successfully.`
     });
 
   } catch (error) {
@@ -582,7 +594,7 @@ const getDashboardStats = async (req, res) => {
         COUNT(*) as total_bookings,
         SUM(CASE WHEN booking_status = 'completed' THEN 1 ELSE 0 END) as completed_bookings,
         SUM(CASE WHEN booking_status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_bookings,
-        SUM(total_amount) as total_revenue
+        COALESCE(SUM(total_amount), 0) as total_revenue
       FROM bookings
       WHERE deleted_at IS NULL
     `);
@@ -616,26 +628,22 @@ const getDashboardStats = async (req, res) => {
   }
 };
 
-
 // Configure storage
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const uploadDir = 'uploads/shops';
-    // Create directory if it doesn't exist
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    // Generate unique filename
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
     cb(null, 'shop-' + uniqueSuffix + ext);
   }
 });
 
-// File filter
 const fileFilter = function (req, file, cb) {
   const allowedTypes = /jpeg|jpg|png|webp|pdf/;
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
@@ -648,7 +656,6 @@ const fileFilter = function (req, file, cb) {
   }
 };
 
-// Create multer instance
 const upload = multer({
   storage: storage,
   limits: {
@@ -658,7 +665,7 @@ const upload = multer({
 });
 
 // ============================================
-// 1. UPDATE VENDOR SHOP (Already exists - ensure it's there)
+// UPDATE VENDOR SHOP
 // ============================================
 
 const updateVendorShop = async (req, res) => {
@@ -669,7 +676,6 @@ const updateVendorShop = async (req, res) => {
     console.log('📝 Update shop request for vendor:', id);
     console.log('📦 Shop data received:', shopData);
     
-    // Sanitize data - convert empty strings to null for numeric and optional fields
     const sanitizeValue = (value) => {
       if (value === '' || value === undefined) return null;
       return value;
@@ -878,7 +884,7 @@ const updateVendorShop = async (req, res) => {
 };
 
 // ============================================
-// 2. UPLOAD SHOP PROFILE IMAGE
+// SHOP IMAGES MANAGEMENT
 // ============================================
 
 const uploadShopProfileImage = [
@@ -897,10 +903,8 @@ const uploadShopProfileImage = [
         });
       }
       
-      // Get image URL (adjust based on your server setup)
       const imageUrl = `/uploads/shops/${req.file.filename}`;
       
-      // Check if shop exists
       const shop = await db.query(
         'SELECT shop_id FROM vendor_shop_details WHERE user_id = $1',
         [id]
@@ -913,7 +917,6 @@ const uploadShopProfileImage = [
         });
       }
       
-      // Delete old profile image from vendor_documents if exists
       await db.query(`
         UPDATE vendor_documents 
         SET status = 'inactive', deleted_at = NOW()
@@ -922,7 +925,6 @@ const uploadShopProfileImage = [
           AND status = 'active'
       `, [id]);
       
-      // Insert new profile image
       const result = await db.query(`
         INSERT INTO vendor_documents (
           vendor_id, document_url, document_type, is_primary, 
@@ -949,12 +951,8 @@ const uploadShopProfileImage = [
   }
 ];
 
-// ============================================
-// 3. UPLOAD SHOP GALLERY IMAGES
-// ============================================
-
-uploadShopGalleryImages = [
-  upload.array('images', 10), // Maximum 10 images at once
+const uploadShopGalleryImages = [
+  upload.array('images', 10),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -969,7 +967,6 @@ uploadShopGalleryImages = [
         });
       }
       
-      // Check if shop exists
       const shop = await db.query(
         'SELECT shop_id FROM vendor_shop_details WHERE user_id = $1',
         [id]
@@ -982,7 +979,6 @@ uploadShopGalleryImages = [
         });
       }
       
-      // Check current image count
       const currentCount = await db.query(`
         SELECT COUNT(*) as count 
         FROM vendor_documents 
@@ -1000,7 +996,6 @@ uploadShopGalleryImages = [
         });
       }
       
-      // Insert all images
       const insertPromises = req.files.map((file, index) => {
         const imageUrl = `/uploads/shops/${file.filename}`;
         const isPrimary = index === 0 && currentCount.rows[0].count === '0';
@@ -1034,18 +1029,13 @@ uploadShopGalleryImages = [
   }
 ];
 
-// ============================================
-// 4. DELETE SHOP IMAGE
-// ============================================
-
-deleteShopImage = async (req, res) => {
+const deleteShopImage = async (req, res) => {
   try {
     const { id, imageId } = req.params;
-    const { type } = req.query; // 'profile' or 'gallery'
+    const { type } = req.query;
     
     console.log('🗑️ Delete image request:', { vendorId: id, imageId, type });
     
-    // Get image details
     const image = await db.query(`
       SELECT * FROM vendor_documents 
       WHERE document_id = $1 AND vendor_id = $2 AND status = 'active'
@@ -1058,14 +1048,12 @@ deleteShopImage = async (req, res) => {
       });
     }
     
-    // Soft delete
     await db.query(`
       UPDATE vendor_documents 
       SET status = 'inactive', deleted_at = NOW()
       WHERE document_id = $1
     `, [imageId]);
     
-    // Optional: Delete physical file
     const filePath = path.join(__dirname, '..', image.rows[0].document_url);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
@@ -1088,17 +1076,12 @@ deleteShopImage = async (req, res) => {
   }
 };
 
-// ============================================
-// 5. SET PRIMARY GALLERY IMAGE
-// ============================================
-
-setShopPrimaryImage = async (req, res) => {
+const setShopPrimaryImage = async (req, res) => {
   try {
     const { id, imageId } = req.params;
     
     console.log('⭐ Set primary image request:', { vendorId: id, imageId });
     
-    // Verify image exists and belongs to this vendor
     const image = await db.query(`
       SELECT * FROM vendor_documents 
       WHERE document_id = $1 AND vendor_id = $2 AND status = 'active'
@@ -1111,14 +1094,12 @@ setShopPrimaryImage = async (req, res) => {
       });
     }
     
-    // Remove primary flag from all gallery images for this vendor
     await db.query(`
       UPDATE vendor_documents 
       SET is_primary = false
       WHERE vendor_id = $1 AND document_type = 'shop_gallery_image'
     `, [id]);
     
-    // Set new primary image
     await db.query(`
       UPDATE vendor_documents 
       SET is_primary = true
@@ -1142,10 +1123,10 @@ setShopPrimaryImage = async (req, res) => {
 };
 
 // ============================================
-// 6. GET VENDOR DOCUMENTS
+// VENDOR DOCUMENTS MANAGEMENT
 // ============================================
 
-getVendorDocuments = async (req, res) => {
+const getVendorDocuments = async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1179,11 +1160,7 @@ getVendorDocuments = async (req, res) => {
   }
 };
 
-// ============================================
-// 7. UPLOAD VENDOR DOCUMENT
-// ============================================
-
-uploadVendorDocument = [
+const uploadVendorDocument = [
   upload.single('document'),
   async (req, res) => {
     try {
@@ -1208,7 +1185,6 @@ uploadVendorDocument = [
       
       const documentUrl = `/uploads/shops/${req.file.filename}`;
       
-      // Insert document
       const result = await db.query(`
         INSERT INTO vendor_documents (
           vendor_id, document_url, document_type, 
@@ -1235,17 +1211,12 @@ uploadVendorDocument = [
   }
 ];
 
-// ============================================
-// 8. DELETE VENDOR DOCUMENT
-// ============================================
-
-deleteVendorDocument = async (req, res) => {
+const deleteVendorDocument = async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('🗑️ Delete document request:', id);
     
-    // Get document details
     const doc = await db.query(
       'SELECT * FROM vendor_documents WHERE document_id = $1',
       [id]
@@ -1258,7 +1229,6 @@ deleteVendorDocument = async (req, res) => {
       });
     }
     
-    // Soft delete
     await db.query(`
       UPDATE vendor_documents 
       SET status = 'inactive', deleted_at = NOW()
@@ -1280,16 +1250,12 @@ deleteVendorDocument = async (req, res) => {
     });
   }
 };
-// ============================================
-// SERVICE MANAGEMENT BACKEND IMPLEMENTATION
-// FOR EXISTING services_master TABLE
-// ADD TO controllers/adminController.js
-// ============================================
 
 // ============================================
-// 1. GET ALL SERVICES
+// SERVICE MANAGEMENT
 // ============================================
-getAllServices = async (req, res) => {
+
+const getAllServices = async (req, res) => {
   try {
     const { 
       page = 1, 
@@ -1303,7 +1269,6 @@ getAllServices = async (req, res) => {
     
     const offset = (page - 1) * limit;
     
-    // Build query conditions
     let conditions = ["status = 'active'"];
     let queryParams = [];
     let paramCounter = 1;
@@ -1326,12 +1291,10 @@ getAllServices = async (req, res) => {
     
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     
-    // Get total count
     const countQuery = `SELECT COUNT(*) FROM services_master ${whereClause}`;
     const countResult = await db.query(countQuery, queryParams);
     const total = parseInt(countResult.rows[0].count);
     
-    // Get paginated services
     const servicesQuery = `
       SELECT 
         service_id,
@@ -1380,10 +1343,7 @@ getAllServices = async (req, res) => {
   }
 };
 
-// ============================================
-// 2. GET SERVICE BY ID
-// ============================================
-getServiceById = async (req, res) => {
+const getServiceById = async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1433,16 +1393,12 @@ getServiceById = async (req, res) => {
   }
 };
 
-// ============================================
-// 3. CREATE SERVICE
-// ============================================
-createService = async (req, res) => {
+const createService = async (req, res) => {
   try {
     const serviceData = req.body;
     
     console.log('➕ Create service request:', serviceData.service_name);
     
-    // Validate required fields
     if (!serviceData.service_name || !serviceData.category || !serviceData.base_price) {
       return res.status(400).json({
         success: false,
@@ -1450,7 +1406,6 @@ createService = async (req, res) => {
       });
     }
     
-    // Sanitize data
     const sanitizedData = {
       service_name: serviceData.service_name.trim(),
       description: serviceData.description?.trim() || null,
@@ -1464,7 +1419,6 @@ createService = async (req, res) => {
       service_type: serviceData.service_type || 'normal'
     };
     
-    // Validate duration
     if (sanitizedData.duration_minutes < 5 || sanitizedData.duration_minutes > 480) {
       return res.status(400).json({
         success: false,
@@ -1472,7 +1426,6 @@ createService = async (req, res) => {
       });
     }
     
-    // Validate price
     if (sanitizedData.base_price < 0) {
       return res.status(400).json({
         success: false,
@@ -1480,7 +1433,6 @@ createService = async (req, res) => {
       });
     }
     
-    // Insert service
     const result = await db.query(`
       INSERT INTO services_master (
         service_name, 
@@ -1541,17 +1493,13 @@ createService = async (req, res) => {
   }
 };
 
-// ============================================
-// 4. UPDATE SERVICE
-// ============================================
-updateService = async (req, res) => {
+const updateService = async (req, res) => {
   try {
     const { id } = req.params;
     const serviceData = req.body;
     
     console.log('✏️ Update service request:', id);
     
-    // Check if service exists
     const existingService = await db.query(
       'SELECT service_id FROM services_master WHERE service_id = $1 AND status = $2',
       [id, 'active']
@@ -1564,14 +1512,12 @@ updateService = async (req, res) => {
       });
     }
     
-    // Sanitize data
     const sanitizeValue = (value) => {
       if (value === '' || value === undefined) return null;
       if (typeof value === 'string') return value.trim();
       return value;
     };
     
-    // Build update query dynamically
     const updates = [];
     const values = [];
     let counter = 1;
@@ -1667,16 +1613,12 @@ updateService = async (req, res) => {
   }
 };
 
-// ============================================
-// 5. DELETE SERVICE (SOFT DELETE)
-// ============================================
-deleteService = async (req, res) => {
+const deleteService = async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('🗑️ Delete service request:', id);
     
-    // Check if service exists
     const existingService = await db.query(
       'SELECT service_id FROM services_master WHERE service_id = $1 AND status = $2',
       [id, 'active']
@@ -1689,7 +1631,6 @@ deleteService = async (req, res) => {
       });
     }
     
-    // Soft delete
     await db.query(`
       UPDATE services_master 
       SET status = 'inactive', deleted_at = NOW()
@@ -1712,10 +1653,7 @@ deleteService = async (req, res) => {
   }
 };
 
-// ============================================
-// 6. TOGGLE SERVICE AVAILABILITY
-// ============================================
-toggleServiceAvailability = async (req, res) => {
+const toggleServiceAvailability = async (req, res) => {
   try {
     const { id } = req.params;
     const { is_available } = req.body;
@@ -1766,10 +1704,12 @@ toggleServiceAvailability = async (req, res) => {
     });
   }
 };
+
 // ============================================
-// 1. GET ALL CATEGORIES
+// CATEGORY MANAGEMENT
 // ============================================
-getAllCategories = async (req, res) => {
+
+const getAllCategories = async (req, res) => {
   try {
     const { 
       page = 1, 
@@ -1782,7 +1722,6 @@ getAllCategories = async (req, res) => {
     
     const offset = (page - 1) * limit;
     
-    // Build query conditions
     let conditions = ["sc.status = 'active'"];
     let queryParams = [];
     let paramCounter = 1;
@@ -1800,12 +1739,10 @@ getAllCategories = async (req, res) => {
     
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     
-    // Get total count
     const countQuery = `SELECT COUNT(*) FROM service_categories sc ${whereClause}`;
     const countResult = await db.query(countQuery, queryParams);
     const total = parseInt(countResult.rows[0].count);
     
-    // Get paginated categories with service count
     const categoriesQuery = `
       SELECT 
         sc.*,
@@ -1844,10 +1781,7 @@ getAllCategories = async (req, res) => {
   }
 };
 
-// ============================================
-// 2. GET CATEGORY BY ID
-// ============================================
-getCategoryById = async (req, res) => {
+const getCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1886,16 +1820,12 @@ getCategoryById = async (req, res) => {
   }
 };
 
-// ============================================
-// 3. CREATE CATEGORY
-// ============================================
-createCategory = async (req, res) => {
+const createCategory = async (req, res) => {
   try {
     const categoryData = req.body;
     
     console.log('➕ Create category request:', categoryData.category_name);
     
-    // Validate required fields
     if (!categoryData.category_name) {
       return res.status(400).json({
         success: false,
@@ -1903,7 +1833,6 @@ createCategory = async (req, res) => {
       });
     }
     
-    // Check if category name already exists
     const existingCategory = await db.query(
       'SELECT category_id FROM service_categories WHERE category_name = $1 AND status = $2',
       [categoryData.category_name.trim(), 'active']
@@ -1916,7 +1845,6 @@ createCategory = async (req, res) => {
       });
     }
     
-    // Sanitize data
     const sanitizedData = {
       category_name: categoryData.category_name.trim(),
       description: categoryData.description?.trim() || null,
@@ -1926,7 +1854,6 @@ createCategory = async (req, res) => {
       is_active: categoryData.is_active !== undefined ? categoryData.is_active : true
     };
     
-    // Validate display order
     if (sanitizedData.display_order < 1 || sanitizedData.display_order > 100) {
       return res.status(400).json({
         success: false,
@@ -1934,7 +1861,6 @@ createCategory = async (req, res) => {
       });
     }
     
-    // Insert category
     const result = await db.query(`
       INSERT INTO service_categories (
         category_name, 
@@ -1973,17 +1899,13 @@ createCategory = async (req, res) => {
   }
 };
 
-// ============================================
-// 4. UPDATE CATEGORY
-// ============================================
-updateCategory = async (req, res) => {
+const updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const categoryData = req.body;
     
     console.log('✏️ Update category request:', id);
     
-    // Check if category exists
     const existingCategory = await db.query(
       'SELECT category_id, category_name FROM service_categories WHERE category_id = $1 AND status = $2',
       [id, 'active']
@@ -1996,7 +1918,6 @@ updateCategory = async (req, res) => {
       });
     }
     
-    // If changing name, check for duplicates
     if (categoryData.category_name && categoryData.category_name.trim() !== existingCategory.rows[0].category_name) {
       const duplicate = await db.query(
         'SELECT category_id FROM service_categories WHERE category_name = $1 AND category_id != $2 AND status = $3',
@@ -2011,14 +1932,12 @@ updateCategory = async (req, res) => {
       }
     }
     
-    // Sanitize data
     const sanitizeValue = (value) => {
       if (value === '' || value === undefined) return null;
       if (typeof value === 'string') return value.trim();
       return value;
     };
     
-    // Build update query dynamically
     const updates = [];
     const values = [];
     let counter = 1;
@@ -2071,7 +1990,6 @@ updateCategory = async (req, res) => {
     
     const result = await db.query(query, values);
     
-    // If category name changed, update all services using this category
     if (newCategoryName && newCategoryName !== oldCategoryName) {
       await db.query(
         'UPDATE services_master SET category = $1 WHERE category = $2',
@@ -2097,16 +2015,12 @@ updateCategory = async (req, res) => {
   }
 };
 
-// ============================================
-// 5. DELETE CATEGORY (SOFT DELETE)
-// ============================================
-deleteCategory = async (req, res) => {
+const deleteCategory = async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('🗑️ Delete category request:', id);
     
-    // Check if category exists
     const existingCategory = await db.query(
       'SELECT category_id, category_name FROM service_categories WHERE category_id = $1 AND status = $2',
       [id, 'active']
@@ -2119,7 +2033,6 @@ deleteCategory = async (req, res) => {
       });
     }
     
-    // Check if category is being used by any services
     const servicesUsingCategory = await db.query(
       'SELECT COUNT(*) FROM services_master WHERE category = $1 AND status = $2',
       [existingCategory.rows[0].category_name, 'active']
@@ -2134,7 +2047,6 @@ deleteCategory = async (req, res) => {
       });
     }
     
-    // Soft delete
     await db.query(`
       UPDATE service_categories 
       SET status = 'inactive', deleted_at = NOW()
@@ -2158,15 +2070,10 @@ deleteCategory = async (req, res) => {
 };
 
 // ============================================
-// BOOKING MANAGEMENT BACKEND IMPLEMENTATION
-// COMPLETE AND BUG-FREE CODE
-// ADD TO controllers/adminController.js
+// BOOKING MANAGEMENT
 // ============================================
 
-// ============================================
-// 1. GET ALL BOOKINGS WITH FILTERS
-// ============================================
-getAllBookings = async (req, res) => {
+const getAllBookings = async (req, res) => {
   try {
     const { 
       page = 1, 
@@ -2182,7 +2089,6 @@ getAllBookings = async (req, res) => {
     
     const offset = (page - 1) * limit;
     
-    // Build query conditions
     let conditions = ["b.status = 'active'"];
     let queryParams = [];
     let paramCounter = 1;
@@ -2209,9 +2115,9 @@ getAllBookings = async (req, res) => {
     
     if (search) {
       conditions.push(`(
-        cu.full_name ILIKE $${paramCounter} OR 
+        cup.name ILIKE $${paramCounter} OR 
         cu.email ILIKE $${paramCounter} OR 
-        v.full_name ILIKE $${paramCounter} OR
+        vup.name ILIKE $${paramCounter} OR
         vsd.shop_name ILIKE $${paramCounter}
       )`);
       queryParams.push(`%${search}%`);
@@ -2220,37 +2126,39 @@ getAllBookings = async (req, res) => {
     
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     
-    // Get total count
     const countQuery = `
       SELECT COUNT(*) 
       FROM bookings b
       LEFT JOIN users cu ON b.user_id = cu.user_id
+      LEFT JOIN user_profiles cup ON cu.user_id = cup.user_id AND cup.is_current = true
       LEFT JOIN users v ON b.vendor_id = v.user_id
-      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.vendor_id
+      LEFT JOIN user_profiles vup ON v.user_id = vup.user_id AND vup.is_current = true
+      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.user_id
       ${whereClause}
     `;
     const countResult = await db.query(countQuery, queryParams);
     const total = parseInt(countResult.rows[0].count);
     
-    // Get paginated bookings with details
     const bookingsQuery = `
       SELECT 
         b.*,
-        cu.full_name as customer_name,
+        cup.name as customer_name,
         cu.email as customer_email,
         cu.phone_number as customer_phone,
-        v.full_name as vendor_name,
+        vup.name as vendor_name,
         v.phone_number as vendor_phone,
         vsd.shop_name,
         COUNT(bs.booking_service_id) as services_count
       FROM bookings b
       LEFT JOIN users cu ON b.user_id = cu.user_id
+      LEFT JOIN user_profiles cup ON cu.user_id = cup.user_id AND cup.is_current = true
       LEFT JOIN users v ON b.vendor_id = v.user_id
-      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.vendor_id
+      LEFT JOIN user_profiles vup ON v.user_id = vup.user_id AND vup.is_current = true
+      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.user_id
       LEFT JOIN booking_services bs ON b.booking_id = bs.booking_id AND bs.status = 'active'
       ${whereClause}
-      GROUP BY b.booking_id, cu.full_name, cu.email, cu.phone_number, 
-               v.full_name, v.phone_number, vsd.shop_name
+      GROUP BY b.booking_id, cup.name, cu.email, cu.phone_number, 
+               vup.name, v.phone_number, vsd.shop_name
       ORDER BY b.created_at DESC
       LIMIT $${paramCounter} OFFSET $${paramCounter + 1}
     `;
@@ -2281,31 +2189,29 @@ getAllBookings = async (req, res) => {
   }
 };
 
-// ============================================
-// 2. GET BOOKING BY ID WITH FULL DETAILS
-// ============================================
-getBookingById = async (req, res) => {
+const getBookingById = async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log('📄 Get booking by ID:', id);
     
-    // Get booking details
     const bookingQuery = `
       SELECT 
         b.*,
-        cu.full_name as customer_name,
+        cup.name as customer_name,
         cu.email as customer_email,
         cu.phone_number as customer_phone,
-        v.full_name as vendor_name,
+        vup.name as vendor_name,
         v.phone_number as vendor_phone,
         v.email as vendor_email,
         vsd.shop_name,
         vsd.shop_address
       FROM bookings b
       LEFT JOIN users cu ON b.user_id = cu.user_id
+      LEFT JOIN user_profiles cup ON cu.user_id = cup.user_id AND cup.is_current = true
       LEFT JOIN users v ON b.vendor_id = v.user_id
-      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.vendor_id
+      LEFT JOIN user_profiles vup ON v.user_id = vup.user_id AND vup.is_current = true
+      LEFT JOIN vendor_shop_details vsd ON v.user_id = vsd.user_id
       WHERE b.booking_id = $1 AND b.status = 'active'
     `;
     
@@ -2318,7 +2224,6 @@ getBookingById = async (req, res) => {
       });
     }
     
-    // Get booking services
     const servicesQuery = `
       SELECT 
         bs.*
@@ -2350,11 +2255,8 @@ getBookingById = async (req, res) => {
   }
 };
 
-// ============================================
-// 3. CREATE BOOKING
-// ============================================
-createBooking = async (req, res) => {
-  const client = await db.getClient();
+const createBooking = async (req, res) => {
+  const client = await db.pool.connect();
   
   try {
     await client.query('BEGIN');
@@ -2362,18 +2264,17 @@ createBooking = async (req, res) => {
     const bookingData = req.body;
     
     console.log('➕ Create booking request:', {
-      user_id: bookingData.user_id,
+      customer_id: bookingData.customer_id,
       vendor_id: bookingData.vendor_id,
       booking_date: bookingData.booking_date,
       services_count: bookingData.services?.length || 0
     });
     
-    // Validate required fields
-    if (!bookingData.user_id || !bookingData.vendor_id || !bookingData.booking_date) {
+    if (!bookingData.customer_id || !bookingData.vendor_id || !bookingData.booking_date) {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        message: 'User ID, Vendor ID, and Booking Date are required'
+        message: 'Customer ID, Vendor ID, and Booking Date are required'
       });
     }
     
@@ -2385,10 +2286,9 @@ createBooking = async (req, res) => {
       });
     }
     
-    // Verify user exists and is customer
     const userCheck = await client.query(
-      'SELECT user_id, role FROM users WHERE user_id = $1 AND status = $2',
-      [bookingData.user_id, 'active']
+      'SELECT user_id, user_type FROM users WHERE user_id = $1 AND status = $2',
+      [bookingData.customer_id, 'active']
     );
     
     if (userCheck.rows.length === 0) {
@@ -2399,7 +2299,7 @@ createBooking = async (req, res) => {
       });
     }
     
-    if (userCheck.rows[0].role !== 'customer') {
+    if (userCheck.rows[0].user_type !== 'CUSTOMER') {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
@@ -2407,10 +2307,9 @@ createBooking = async (req, res) => {
       });
     }
     
-    // Verify vendor exists and is approved
     const vendorCheck = await client.query(
-      'SELECT user_id, verification_status FROM users WHERE user_id = $1 AND role = $2 AND status = $3',
-      [bookingData.vendor_id, 'vendor', 'active']
+      'SELECT u.user_id, vsd.verification_status FROM users u LEFT JOIN vendor_shop_details vsd ON u.user_id = vsd.user_id WHERE u.user_id = $1 AND u.user_type = $2 AND u.status = $3',
+      [bookingData.vendor_id, 'VENDOR', 'active']
     );
     
     if (vendorCheck.rows.length === 0) {
@@ -2429,7 +2328,6 @@ createBooking = async (req, res) => {
       });
     }
     
-    // Validate booking date is not in the past
     const bookingDate = new Date(bookingData.booking_date);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -2442,16 +2340,14 @@ createBooking = async (req, res) => {
       });
     }
     
-    // Calculate total amount
-    const totalAmount = bookingData.services.reduce(
+    const totalPrice = bookingData.services.reduce(
       (sum, service) => sum + parseFloat(service.service_price), 
       0
     );
     
-    // Insert booking
     const bookingInsertQuery = `
       INSERT INTO bookings (
-        user_id,
+        customer_id,
         vendor_id,
         booking_date,
         total_amount,
@@ -2465,10 +2361,10 @@ createBooking = async (req, res) => {
     `;
     
     const bookingResult = await client.query(bookingInsertQuery, [
-      bookingData.user_id,
+      bookingData.customer_id,
       bookingData.vendor_id,
       bookingData.booking_date,
-      totalAmount,
+      totalPrice,
       bookingData.payment_method || 'cash',
       bookingData.payment_status || 'pending',
       'confirmed'
@@ -2476,7 +2372,6 @@ createBooking = async (req, res) => {
     
     const newBooking = bookingResult.rows[0];
     
-    // Insert booking services
     for (const service of bookingData.services) {
       const serviceInsertQuery = `
         INSERT INTO booking_services (
@@ -2525,17 +2420,13 @@ createBooking = async (req, res) => {
   }
 };
 
-// ============================================
-// 4. UPDATE BOOKING STATUS
-// ============================================
-updateBookingStatus = async (req, res) => {
+const updateBookingStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { booking_status, payment_status } = req.body;
     
     console.log('✏️ Update booking status:', { id, booking_status, payment_status });
     
-    // Check if booking exists
     const existingBooking = await db.query(
       'SELECT booking_id, booking_status FROM bookings WHERE booking_id = $1 AND status = $2',
       [id, 'active']
@@ -2548,7 +2439,6 @@ updateBookingStatus = async (req, res) => {
       });
     }
     
-    // Prevent updating cancelled bookings
     if (existingBooking.rows[0].booking_status === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -2556,13 +2446,11 @@ updateBookingStatus = async (req, res) => {
       });
     }
     
-    // Build update query
     const updates = [];
     const values = [];
     let counter = 1;
     
     if (booking_status !== undefined) {
-      // Validate booking status
       const validStatuses = ['confirmed', 'completed', 'cancelled', 'no_show'];
       if (!validStatuses.includes(booking_status)) {
         return res.status(400).json({
@@ -2575,7 +2463,6 @@ updateBookingStatus = async (req, res) => {
     }
     
     if (payment_status !== undefined) {
-      // Validate payment status
       const validStatuses = ['pending', 'paid', 'failed', 'refunded'];
       if (!validStatuses.includes(payment_status)) {
         return res.status(400).json({
@@ -2623,17 +2510,13 @@ updateBookingStatus = async (req, res) => {
   }
 };
 
-// ============================================
-// 5. CANCEL BOOKING
-// ============================================
-cancelBooking = async (req, res) => {
+const cancelBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const { cancellation_reason, cancelled_by } = req.body;
     
     console.log('🗑️ Cancel booking request:', { id, cancelled_by });
     
-    // Validate required fields
     if (!cancellation_reason || !cancellation_reason.trim()) {
       return res.status(400).json({
         success: false,
@@ -2648,7 +2531,6 @@ cancelBooking = async (req, res) => {
       });
     }
     
-    // Check if booking exists
     const existingBooking = await db.query(
       'SELECT booking_id, booking_status, payment_status FROM bookings WHERE booking_id = $1 AND status = $2',
       [id, 'active']
@@ -2661,7 +2543,6 @@ cancelBooking = async (req, res) => {
       });
     }
     
-    // Check if already cancelled
     if (existingBooking.rows[0].booking_status === 'cancelled') {
       return res.status(400).json({
         success: false,
@@ -2669,7 +2550,6 @@ cancelBooking = async (req, res) => {
       });
     }
     
-    // Check if already completed
     if (existingBooking.rows[0].booking_status === 'completed') {
       return res.status(400).json({
         success: false,
@@ -2677,7 +2557,6 @@ cancelBooking = async (req, res) => {
       });
     }
     
-    // Update booking
     const result = await db.query(`
       UPDATE bookings 
       SET 
@@ -2710,16 +2589,12 @@ cancelBooking = async (req, res) => {
   }
 };
 
-// ============================================
-// 6. GET VENDOR SERVICES FOR BOOKING
-// ============================================
-getVendorServicesForBooking = async (req, res) => {
+const getVendorServicesForBooking = async (req, res) => {
   try {
-    const { id } = req.params; // vendor_id
+    const { id } = req.params;
     
     console.log('📄 Get vendor services for booking:', id);
     
-    // Get vendor's available services with pricing
     const servicesQuery = `
       SELECT 
         vs.vendor_service_id,
@@ -2758,9 +2633,6 @@ getVendorServicesForBooking = async (req, res) => {
     });
   }
 };
-
-
-
 
 module.exports = {
   getAllUsers,

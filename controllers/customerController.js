@@ -17,7 +17,7 @@ const getDashboardStats = async (req, res) => {
         SUM(CASE WHEN booking_status = 'confirmed' THEN 1 ELSE 0 END) as upcoming_bookings,
         SUM(CASE WHEN booking_status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_bookings
       FROM bookings
-      WHERE customer_id = $1 AND status = 'active'`,
+      WHERE user_id = $1 AND status = 'active'`,
       [customerId]
     );
 
@@ -32,17 +32,17 @@ const getDashboardStats = async (req, res) => {
         vsd.shop_name,
         vsd.shop_address,
         vsd.city,
-        up.full_name as vendor_name,
+        up.name as vendor_name,
         u.phone_number as vendor_phone
       FROM bookings b
-      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.user_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
       WHERE b.user_id = $1 
         AND b.booking_status = 'confirmed'
         AND b.booking_date >= CURRENT_DATE
         AND b.status = 'active'
-      ORDER BY b.booking_date ASC, b.booking_time ASC
+      ORDER BY b.booking_date ASC
       LIMIT 5`,
       [customerId]
     );
@@ -57,7 +57,7 @@ const getDashboardStats = async (req, res) => {
         vm.total_reviews,
         COUNT(b.booking_id) as booking_count
       FROM bookings b
-      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.user_id
       LEFT JOIN vendor_metrics vm ON b.vendor_id = vm.vendor_id
       WHERE b.user_id = $1 AND b.status = 'active'
       GROUP BY b.vendor_id, vsd.shop_name, vsd.city, vm.average_rating, vm.total_reviews
@@ -125,12 +125,12 @@ const getAllShops = async (req, res) => {
            AND vs.status = 'active' 
            AND vs.is_available = true) as services_count
       FROM users u
-      INNER JOIN vendor_shop_details vsd ON u.user_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON u.user_id = vsd.user_id
       LEFT JOIN vendor_metrics vm ON u.user_id = vm.vendor_id
-      WHERE u.role = 'vendor' 
+      WHERE u.user_type = 'vendor' 
         AND u.status = 'active' 
-        AND u.status = 1
-        AND vsd.status = 1
+        AND u.status = 'active' 
+        AND vsd.status = 'active'
     `;
     
     const params = [];
@@ -236,15 +236,15 @@ const getShopDetails = async (req, res) => {
         vm.total_reviews,
         vm.total_bookings,
         vm.completed_bookings,
-        up.full_name as owner_name,
+        up.name as owner_name,
         u.phone_number as contact_number
       FROM users u
-      INNER JOIN vendor_shop_details vsd ON u.user_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON u.user_id = vsd.user_id
       LEFT JOIN vendor_metrics vm ON u.user_id = vm.vendor_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
       WHERE vsd.shop_id = $1 
         AND u.status = 'active' 
-        AND u.status = 1
+        AND u.status = 'active' 
     `;
 
     const shop = await db.query(shopQuery, [shopId]);
@@ -297,11 +297,11 @@ const getShopDetails = async (req, res) => {
         r.rating,
         r.review_text,
         r.created_at,
-        up.full_name as customer_name,
+        up.name as customer_name,
         (SELECT profile_picture FROM user_profiles 
-         WHERE user_id = r.customer_id AND is_current = true) as customer_photo
+         WHERE user_id = r.user_id AND is_current = true) as customer_photo
       FROM reviews r
-      LEFT JOIN user_profiles up ON r.customer_id = up.user_id AND up.is_current = true
+      LEFT JOIN user_profiles up ON r.user_id = up.user_id AND up.is_current = true
       WHERE r.vendor_id = $1 AND r.status = 'active'
       ORDER BY r.created_at DESC
       LIMIT 10`,
@@ -344,7 +344,7 @@ const getAvailableSlots = async (req, res) => {
     // Get shop details
     const shop = await db.query(
       `SELECT 
-        vendor_id,
+        user_id,
         open_time,
         close_time,
         break_start_time,
@@ -477,8 +477,8 @@ const createBooking = async (req, res) => {
 
     // Verify vendor exists and is active
     const vendorCheck = await client.query(
-      'SELECT user_id, status FROM users WHERE user_id = $1 AND role = $2 AND status = $3',
-      [vendor_id, 'vendor', 'active']
+      'SELECT user_id, status FROM users WHERE user_id = $1 AND user_type = $2 AND status = $3',
+      [vendor_id, 'VENDOR', 'active']
     );
 
     if (vendorCheck.rows.length === 0) {
@@ -489,7 +489,7 @@ const createBooking = async (req, res) => {
       });
     }
 
-    if (vendorCheck.rows[0].status !== 1) {
+    if (vendorCheck.rows[0].status !== 'active') {
       await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
@@ -499,7 +499,7 @@ const createBooking = async (req, res) => {
 
     // Check slot availability
     const shopDetails = await client.query(
-      'SELECT no_of_seats FROM vendor_shop_details WHERE vendor_id = $1',
+      'SELECT no_of_seats FROM vendor_shop_details WHERE user_id = $1',
       [vendor_id]
     );
 
@@ -549,21 +549,20 @@ const createBooking = async (req, res) => {
     // Create booking
     const bookingResult = await client.query(
       `INSERT INTO bookings (
-        customer_id,
+        user_id,
         vendor_id,
         booking_date,
         booking_time,
         total_amount,
-        total_duration_minutes,
         booking_status,
         payment_method,
         payment_status,
         customer_notes,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', 'cash', 'pending', $7, NOW(), NOW())
+      ) VALUES ($1, $2, $3, $4, $5, 'confirmed', 'cash', 'pending', $6, NOW(), NOW())
       RETURNING booking_id, booking_date, booking_time, total_amount`,
-      [customerId, vendor_id, booking_date, booking_time, totalPrice, totalDuration, notes]
+      [customerId, vendor_id, booking_date, booking_time, totalPrice, [notes]]
     );
 
     const booking = bookingResult.rows[0];
@@ -584,14 +583,18 @@ const createBooking = async (req, res) => {
           service_id,
           service_name,
           service_price,
+          start_time,
+          end_time,
           duration_minutes,
           created_at
-        ) VALUES ($1, $2, $3, $4, $5, NOW())`,
+        ) VALUES ($1, $2, $3, $4, $5, $6,$7, NOW())`,
         [
           booking.booking_id,
           service.vendor_service_id,
           serviceData.rows[0].service_name,
           serviceData.rows[0].price,
+          '10:00', // Placeholder start time
+          '11:00',
           serviceData.rows[0].default_duration_minutes
         ]
       );
@@ -667,12 +670,11 @@ const getMyBookings = async (req, res) => {
         b.booking_status,
         b.payment_status,
         b.customer_notes,
-        b.vendor_notes,
         b.created_at,
         vsd.shop_name,
         vsd.shop_address,
         vsd.city,
-        up.full_name as vendor_name,
+        up.name as vendor_name,
         u.phone_number as vendor_phone,
         (SELECT document_url FROM vendor_documents 
          WHERE vendor_id = b.vendor_id 
@@ -682,7 +684,7 @@ const getMyBookings = async (req, res) => {
         (SELECT COUNT(*) FROM booking_services 
          WHERE booking_id = b.booking_id AND status = 'active') as services_count
       FROM bookings b
-      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.user_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
       WHERE b.user_id = $1 AND b.status = 'active'
@@ -746,7 +748,7 @@ const getBookingDetails = async (req, res) => {
         vsd.state,
         vsd.latitude,
         vsd.longitude,
-        up.full_name as vendor_name,
+        up.name as vendor_name,
         u.phone_number as vendor_phone,
         (SELECT document_url FROM vendor_documents 
          WHERE vendor_id = b.vendor_id 
@@ -754,7 +756,7 @@ const getBookingDetails = async (req, res) => {
            AND status = 'active' 
          LIMIT 1) as shop_image
       FROM bookings b
-      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.vendor_id
+      INNER JOIN vendor_shop_details vsd ON b.vendor_id = vsd.user_id
       LEFT JOIN users u ON b.vendor_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
       WHERE b.booking_id = $1 AND b.user_id = $2 AND b.status = 'active'`,
@@ -812,7 +814,7 @@ const cancelBooking = async (req, res) => {
     const booking = await db.query(
       `SELECT booking_id, vendor_id, booking_status, booking_date 
        FROM bookings 
-       WHERE booking_id = $1 AND customer_id = $2 AND status = 'active'`,
+       WHERE booking_id = $1 AND user_id = $2 AND status = 'active'`,
       [bookingId, customerId]
     );
 
@@ -924,7 +926,7 @@ const addReview = async (req, res) => {
     // Check if booking exists and is completed
     const booking = await db.query(
       `SELECT vendor_id, booking_status FROM bookings 
-       WHERE booking_id = $1 AND customer_id = $2 AND status = 'active'`,
+       WHERE booking_id = $1 AND user_id = $2 AND status = 'active'`,
       [booking_id, customerId]
     );
 

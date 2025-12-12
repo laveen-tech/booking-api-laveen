@@ -19,7 +19,7 @@ const getAllServicesMaster = async (req, res) => {
         base_price,
         category,
         is_available,
-        image_url,
+        document_url,
         requirements,
         benefits,
         service_type,
@@ -62,7 +62,7 @@ const getVendorServices = async (req, res) => {
         sm.default_duration_minutes as duration,
         sm.category,
         vs.is_available,
-        sm.image_url,
+        sm.document_url,
         vs.created_at
       FROM vendor_services vs
       INNER JOIN services_master sm ON vs.service_id = sm.service_id
@@ -458,8 +458,8 @@ const getDashboardStats = async (req, res) => {
         b.booking_time,
         b.total_amount,
         b.booking_status,
-        COALESCE(up.full_name, b.offline_customer_name) as customer_name,
-        COALESCE(u.phone_number, b.offline_customer_phone) as customer_phone
+        COALESCE(up.name) as customer_name,
+        COALESCE(u.phone_number) as customer_phone
       FROM bookings b
       LEFT JOIN users u ON b.user_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
@@ -548,7 +548,7 @@ const uploadShopImages = [
     
     try {
       const vendorId = req.user.userId;
-      const { image_type } = req.body; // 'shop' or 'portfolio'
+      const { document_type } = req.body; // 'shop' or 'portfolio'
 
       if (!req.files || req.files.length === 0) {
         return res.status(400).json({
@@ -565,11 +565,11 @@ const uploadShopImages = [
         const imageUrl = `/uploads/shops/${file.filename}`;
         
         const result = await client.query(
-          `INSERT INTO vendor_images (
-            vendor_id, image_url, image_type, status, uploaded_at
+          `INSERT INTO vendor_documents (
+            vendor_id, document_url, document_type, status, updated_at
           ) VALUES ($1, $2, $3, 'active', NOW())
-          RETURNING image_id, image_url`,
-          [vendorId, imageUrl, image_type || 'shop']
+          RETURNING document_id, document_url`,
+          [vendorId, imageUrl, document_type || 'shop']
         );
 
         uploadedImages.push(result.rows[0]);
@@ -603,10 +603,10 @@ const getVendorImages = async (req, res) => {
     const vendorId = req.user.userId;
 
     const result = await db.query(
-      `SELECT image_id, image_url, image_type, uploaded_at
-       FROM vendor_images
+      `SELECT document_id, document_url, document_type, updated_at
+       FROM vendor_documents
        WHERE vendor_id = $1 AND status = 'active'
-       ORDER BY uploaded_at DESC`,
+       ORDER BY updated_at DESC`,
       [vendorId]
     );
 
@@ -629,12 +629,12 @@ const getVendorImages = async (req, res) => {
 const deleteVendorImage = async (req, res) => {
   try {
     const vendorId = req.user.userId;
-    const { image_id } = req.params;
+    const { document_id } = req.params;
 
     // Get image details
     const image = await db.query(
-      'SELECT image_url FROM vendor_images WHERE image_id = $1 AND vendor_id = $2 AND status = $3',
-      [image_id, vendorId, 'active']
+      'SELECT document_url FROM vendor_documents WHERE document_id = $1 AND vendor_id = $2 AND status = $3',
+      [document_id, vendorId, 'active']
     );
 
     if (image.rows.length === 0) {
@@ -646,14 +646,14 @@ const deleteVendorImage = async (req, res) => {
 
     // Soft delete
     await db.query(
-      `UPDATE vendor_images 
+      `UPDATE vendor_documents 
        SET status = 'inactive', deleted_at = NOW()
-       WHERE image_id = $1`,
-      [image_id]
+       WHERE document_id = $1`,
+      [document_id]
     );
 
     // Optional: Delete physical file
-    const filePath = path.join(__dirname, '..', image.rows[0].image_url);
+    const filePath = path.join(__dirname, '..', image.rows[0].document_url);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }

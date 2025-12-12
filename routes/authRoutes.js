@@ -20,6 +20,8 @@ const { verifyToken } = require('../middleware/auth');
 // Traditional login (for users with password)
 router.post('/login', authController.login);
 
+router.post('/register', authController.register);
+
 // ============================================
 // PROTECTED ROUTES
 // ============================================

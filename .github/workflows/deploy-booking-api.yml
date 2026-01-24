@@ -22,14 +22,14 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
           if [ "${{ github.ref_name }}" = "uat-booking-api" ]; then
-            cd /var/www/booking-api/uat
+            cd /var/www/booking-api/uat/booking-api
             git pull origin uat-booking-api
             npm install
             pm2 restart booking-api-uat
           fi
 
           if [ "${{ github.ref_name }}" = "production-booking-api" ]; then
-            cd /var/www/booking-api/production
+            cd /var/www/booking-api/production/booking-api
             git pull origin production-booking-api
             npm install
             pm2 restart booking-api-production

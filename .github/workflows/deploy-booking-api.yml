@@ -39,3 +39,12 @@ jobs:
             npm install
             pm2 restart booking-api-production
           fi
+
+    - name: Check secrets presence (safe)
+      run: |
+        if [ -z "${{ secrets.SERVER_IP }}" ]; then
+          echo "SERVER_IP is missing"
+          exit 1
+        else
+          echo "SERVER_IP is present"
+        fi

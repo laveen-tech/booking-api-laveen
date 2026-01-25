@@ -24,9 +24,7 @@ jobs:
         debug: true                 # ✅ must-have
         script: |
           whoami
-          root
           hostname
-          srv1118630
 
           if [ "${{ github.ref_name }}" = "uat-booking-api" ]; then
             cd /var/www/booking-api/uat/booking-api

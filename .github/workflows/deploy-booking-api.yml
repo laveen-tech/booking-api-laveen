@@ -24,20 +24,15 @@ jobs:
         debug: true                 # ✅ must-have
         script: |
           whoami
+          root
           hostname
+          srv1118630
 
           if [ "${{ github.ref_name }}" = "uat-booking-api" ]; then
             cd /var/www/booking-api/uat/booking-api
             git pull origin uat-booking-api
             npm install
             pm2 restart booking-api-uat
-          fi
-
-          if [ "${{ github.ref_name }}" = "production-booking-api" ]; then
-            cd /var/www/booking-api/production/booking-api
-            git pull origin production-booking-api
-            npm install
-            pm2 restart booking-api-production
           fi
 
     - name: Check secrets presence (safe)

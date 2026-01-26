@@ -26,6 +26,8 @@ jobs:
           whoami
           hostname
 
+          export GIT_SSH_COMMAND="ssh -i /root/.ssh/booking_api_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+
           if [ "${{ github.ref_name }}" = "uat-booking-api" ]; then
             cd /var/www/booking-api/uat/booking-api
             git pull origin uat-booking-api

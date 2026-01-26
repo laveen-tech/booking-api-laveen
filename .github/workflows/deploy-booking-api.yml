@@ -18,10 +18,10 @@ jobs:
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.SERVER_IP }}
-        username: root              # ✅ hardcoded (important)
-        port: 22                    # ✅ expliitly set
+        username: root
+        port: 22
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        debug: true                 # ✅ must-have
+        debug: true
         script: |
           whoami
           hostname
@@ -33,11 +33,9 @@ jobs:
             pm2 restart booking-api-uat
           fi
 
-    - name: Check secrets presence (safe)
-      run: |
-        if [ -z "${{ secrets.SERVER_IP }}" ]; then
-          echo "SERVER_IP is missing"
-          exit 1
-        else
-          echo "SERVER_IP is present"
-        fi
+          if [ "${{ github.ref_name }}" = "production-booking-api" ]; then
+            cd /var/www/booking-api/production/booking-api
+            git pull origin production-booking-api
+            npm install
+            pm2 restart booking-api-production
+          fi

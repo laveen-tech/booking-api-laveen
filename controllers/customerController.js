@@ -1106,12 +1106,18 @@ const getMyBookings = async (req, res) => {
        WHERE bs.booking_id = b.booking_id AND bs.status = 'active'),
       0
     ) AS total_duration,
-    
+
+    EXISTS(
+      SELECT 1 FROM reviews r
+      WHERE r.booking_id = b.booking_id
+        AND r.status = 'active'
+    ) AS has_reviewed,
+
     (
       SELECT COALESCE(
         (SELECT json_agg(svc)
          FROM (
-           SELECT 
+           SELECT
              json_build_object(
                'service_id', bs.service_id,
                'service_name', bs.service_name,
@@ -1121,7 +1127,7 @@ const getMyBookings = async (req, res) => {
                'end_time', bs.end_time::TEXT
              ) AS svc
            FROM booking_services bs
-           WHERE bs.booking_id = b.booking_id 
+           WHERE bs.booking_id = b.booking_id
              AND bs.status = 'active'
            ORDER BY bs.start_time
          ) ordered_services

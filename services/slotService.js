@@ -255,6 +255,22 @@ async function getAvailableSlots(shopId, date) {
         });
     }
 
+    // ── STEP 8: Mark past slots unavailable when date is today (IST) ────────
+    // Server runs UTC; shift +5:30 to get India local time.
+    const nowIST    = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    const todayIST  = nowIST.toISOString().split('T')[0]; // "YYYY-MM-DD"
+    const nowMinIST = nowIST.getUTCHours() * 60 + nowIST.getUTCMinutes();
+
+    if (date === todayIST) {
+        for (const slot of slots) {
+            if (toMins(slot.time) <= nowMinIST) {
+                slot.is_available    = false;
+                slot.available_seats = 0;
+                slot.reason          = 'past';
+            }
+        }
+    }
+
     return {
         isClosed:       false,
         date,

@@ -52,6 +52,7 @@ const getVendorProfile = async (req, res) => {
         vs.no_of_seats,
         vs.no_of_workers,
         vs.verification_status,
+        vs.verification_status AS approval_status,
         vs.business_license,
         vs.tax_number,
         vs.bank_account_number,
@@ -486,22 +487,17 @@ const updateShopCapacity = async (req, res) => {
 const getAllServicesMaster = async (req, res) => {
   try {
     const result = await db.query(
-        `SELECT 
+        `SELECT
         service_id,
         service_name,
-        service_description as description,
-        default_duration_minutes as duration_minutes,
-        base_price,
-        category,
-        is_available,
-        image_url,
-        requirements,
-        benefits,
+        service_description AS description,
+        default_duration_minutes AS duration_minutes,
         service_type,
         status
-      FROM services_master 
+      FROM services_master
       WHERE status = 'active'
-      ORDER BY category, service_name`
+        AND deleted_at IS NULL
+      ORDER BY service_name`
     );
 
     res.json({
@@ -648,18 +644,16 @@ const addCustomService = async (req, res) => {
     const vendorId = req.user.userId;
     const {
       service_name,
-      category,
       price,
-      duration,          // duration_minutes
       description,
       is_available
     } = req.body;
 
-    // Validation
-    if (!service_name || !category || !price || !duration) {
+    // Validation — duration is fixed at 30 minutes per business rules
+    if (!service_name || !price) {
       return res.status(400).json({
         success: false,
-        message: 'service_name, category, price, and duration are required.'
+        message: 'service_name and price are required.'
       });
     }
 
@@ -670,35 +664,22 @@ const addCustomService = async (req, res) => {
       });
     }
 
-    if (isNaN(duration) || parseInt(duration) <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Duration must be a positive integer (minutes).'
-      });
-    }
-
     // Insert into services_master as a vendor-specific custom service
+    // Schema columns: service_name, service_description, default_duration_minutes, service_type, status
     const masterResult = await db.query(
         `INSERT INTO services_master (
         service_name,
         service_description,
         default_duration_minutes,
-        base_price,
-        category,
-        is_available,
         service_type,
         status,
-  
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, true, 'custom', 'active', NOW(), NOW())
+      ) VALUES ($1, $2, 30, 'custom', 'active', NOW(), NOW())
       RETURNING service_id`,
         [
           service_name.trim(),
           description || null,
-          parseInt(duration),
-          parseFloat(price),
-          category.trim(),
         ]
     );
 
@@ -730,9 +711,8 @@ const addCustomService = async (req, res) => {
         vendor_service_id: vendorServiceResult.rows[0].vendor_service_id,
         service_id: newServiceId,
         service_name: service_name.trim(),
-        category: category.trim(),
         price: parseFloat(price),
-        duration_minutes: parseInt(duration),
+        duration_minutes: 30,
         is_available: is_available !== false
       }
     });
@@ -993,13 +973,23 @@ const getVendorBookings = async (req, res) => {
     const offset = (page - 1) * limit;
 
     let query = `
-      SELECT 
+      SELECT
         b.*,
         COALESCE(up.name) as customer_name,
         COALESCE(u.phone_number) as customer_phone,
         COALESCE(u.email) as customer_email,
-        (SELECT COUNT(*) FROM booking_services bs 
-         WHERE bs.booking_id = b.booking_id AND bs.status = 'active') as services_count
+        (SELECT COUNT(*) FROM booking_services bs
+         WHERE bs.booking_id = b.booking_id AND bs.status = 'active') as services_count,
+        COALESCE(
+          (SELECT json_agg(json_build_object(
+            'service_name', bs2.service_name,
+            'price', bs2.service_price,
+            'duration_minutes', bs2.duration_minutes
+          ))
+           FROM booking_services bs2
+           WHERE bs2.booking_id = b.booking_id AND bs2.status = 'active'),
+          '[]'::json
+        ) as services
       FROM bookings b
       LEFT JOIN users u ON b.user_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
@@ -1286,7 +1276,7 @@ const completeBooking = async (req, res) => {
     const { actual_amount } = req.body;
 
     const booking = await db.query(
-        `SELECT booking_id, user_id, booking_status, total_amount
+        `SELECT booking_id, user_id, booking_status, total_amount, booking_date, booking_time
        FROM bookings
        WHERE booking_id = $1 AND vendor_id = $2 AND status = 'active'`,
         [bookingId, vendorId]
@@ -1296,12 +1286,27 @@ const completeBooking = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
-    const { booking_status, user_id: customerId, total_amount } = booking.rows[0];
+    const { booking_status, user_id: customerId, total_amount, booking_date, booking_time } = booking.rows[0];
 
     if (booking_status !== 'confirmed') {
       return res.status(400).json({
         success: false,
         message: `Can only complete confirmed bookings. Current status: ${booking_status}`,
+      });
+    }
+
+    // BUG 30: Prevent completing booking before its start time
+    const now = new Date();
+    const bookingStart = new Date(
+      (booking_date instanceof Date
+        ? booking_date.toISOString().split('T')[0]
+        : String(booking_date).split('T')[0])
+      + 'T' + booking_time
+    );
+    if (now < bookingStart) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot complete booking before its start time.'
       });
     }
 
@@ -1948,19 +1953,38 @@ const getDashboardStats = async (req, res) => {
   try {
     const vendorId = req.user.userId;
 
-    // Get basic stats
+    // Get live stats directly from bookings + reviews tables (source of truth)
     const stats = await db.query(
-        `SELECT 
-        vm.total_bookings,
-        vm.completed_bookings,
-        vm.cancelled_bookings,
-        vm.average_rating,
-        vm.total_reviews,
-        vm.total_revenue
-      FROM vendor_metrics vm
-      WHERE vm.vendor_id = $1`,
+        `SELECT
+        COUNT(b.booking_id)                                                         AS total_bookings,
+        COUNT(b.booking_id) FILTER (WHERE b.booking_status = 'completed')          AS completed_bookings,
+        COUNT(b.booking_id) FILTER (WHERE b.booking_status IN ('rejected','cancelled')) AS cancelled_bookings,
+        COALESCE(SUM(b.total_amount) FILTER (WHERE b.booking_status = 'completed'), 0) AS total_revenue,
+        COALESCE((SELECT AVG(r.rating) FROM reviews r WHERE r.vendor_id = $1), 0)  AS average_rating,
+        COALESCE((SELECT COUNT(*) FROM reviews r WHERE r.vendor_id = $1), 0)       AS total_reviews
+      FROM bookings b
+      WHERE b.vendor_id = $1 AND b.status = 'active'`,
         [vendorId]
     );
+
+    // Keep vendor_metrics in sync
+    if (stats.rows.length > 0) {
+      const s = stats.rows[0];
+      db.query(
+          `INSERT INTO vendor_metrics (vendor_id, total_bookings, completed_bookings, cancelled_bookings, total_revenue, average_rating, total_reviews, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+           ON CONFLICT (vendor_id) DO UPDATE SET
+             total_bookings    = EXCLUDED.total_bookings,
+             completed_bookings= EXCLUDED.completed_bookings,
+             cancelled_bookings= EXCLUDED.cancelled_bookings,
+             total_revenue     = EXCLUDED.total_revenue,
+             average_rating    = EXCLUDED.average_rating,
+             total_reviews     = EXCLUDED.total_reviews,
+             updated_at        = NOW()`,
+          [vendorId, s.total_bookings, s.completed_bookings, s.cancelled_bookings,
+            s.total_revenue, s.average_rating, s.total_reviews]
+      ).catch(e => console.warn('vendor_metrics sync warning:', e.message));
+    }
 
     // Get today's bookings
     const todayBookings = await db.query(
@@ -2046,15 +2070,16 @@ const getDashboardStats = async (req, res) => {
       success: true,
       message: 'Dashboard analytics loaded successfully.',
       data: {
-        total_bookings: statsData.total_bookings || 0,
-        completed_bookings: statsData.completed_bookings || 0,
-        cancelled_bookings: statsData.cancelled_bookings || 0,
+        total_bookings: parseInt(statsData.total_bookings) || 0,
+        completed_bookings: parseInt(statsData.completed_bookings) || 0,
+        cancelled_bookings: parseInt(statsData.cancelled_bookings) || 0,
         pending_bookings: parseInt(pendingCount.rows[0].count),
         todays_bookings: todayBookings.rows,
         todays_bookings_count: todayBookings.rows.length,
         monthly_revenue: parseFloat(monthlyRevenue.rows[0].revenue),
         average_rating: parseFloat(statsData.average_rating) || 0,
-        total_reviews: statsData.total_reviews || 0,
+        total_reviews: parseInt(statsData.total_reviews) || 0,
+        total_revenue: parseFloat(statsData.total_revenue) || 0,
         total_services: parseInt(servicesCount.rows[0].count),
         upcoming_bookings: upcomingBookings.rows
       }

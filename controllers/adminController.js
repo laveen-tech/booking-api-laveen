@@ -664,12 +664,29 @@ const updateVendorVerification = async (req, res) => {
       });
     }
 
+    // BUG 31: Before final approval, ensure all documents are approved
+    if (finalStatus === 'approved') {
+      const docs = await db.query(
+        'SELECT document_id, verification_status FROM vendor_documents WHERE vendor_id = $1 AND status = \'active\'',
+        [id]
+      );
+      if (docs.rows.length > 0) {
+        const allApproved = docs.rows.every(d => d.verification_status === 'approved');
+        if (!allApproved) {
+          return res.status(400).json({
+            success: false,
+            message: 'All documents must be approved before final vendor approval.'
+          });
+        }
+      }
+    }
+
     // Update shop verification status
     const result = await db.query(
-      `UPDATE vendor_shop_details 
-       SET verification_status = $1, 
-           admin_comments = $2, 
-           verified_by = $3, 
+      `UPDATE vendor_shop_details
+       SET verification_status = $1,
+           admin_comments = $2,
+           verified_by = $3,
            verified_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE user_id = $4

@@ -642,6 +642,16 @@ const createBooking = async (req, res) => {
       });
     }
 
+    // BUG 28: Prevent booking past time slots
+    const now = new Date();
+    const bookingDateTime = new Date(booking_date + 'T' + timeSlot);
+    if (bookingDateTime < now) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot book past time slots. Please select a future date and time.'
+      });
+    }
+
     // ── Rest of the existing createBooking logic continues unchanged ───────
     await client.query('BEGIN');
 

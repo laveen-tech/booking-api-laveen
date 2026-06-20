@@ -47,8 +47,10 @@ router.put('/vendors/:id/shop/images/:imageId/primary', adminController.setShopP
 router.get('/vendors/:id/documents', adminController.getVendorDocuments);
 router.post('/vendors/:id/documents', adminController.uploadVendorDocument);
 
-// Document verification (two path styles — keep both for compatibility)
+// Document verification (multiple path styles — all map to same handler)
 router.put('/documents/:documentId/verification', adminController.updateDocumentVerification);
+router.put('/vendors/:id/documents/:documentId/verify', adminController.updateDocumentVerification);
+router.put('/vendors/:id/documents/:documentId/verification', adminController.updateDocumentVerification);
 router.delete('/documents/:documentId', adminController.deleteVendorDocument);
 
 // Vendor services (for booking creation in admin panel)

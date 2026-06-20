@@ -1107,11 +1107,19 @@ const getMyBookings = async (req, res) => {
       0
     ) AS total_duration,
 
-    EXISTS(
-      SELECT 1 FROM reviews r
-      WHERE r.booking_id = b.booking_id
-        AND r.status = 'active'
-    ) AS has_reviewed,
+    (
+      SELECT row_to_json(rev)
+      FROM (
+        SELECT
+          true                AS has_reviewed,
+          r.rating            AS rating,
+          r.review_text       AS review_text
+        FROM reviews r
+        WHERE r.booking_id = b.booking_id
+          AND r.status = 'active'
+        LIMIT 1
+      ) rev
+    ) AS review_info,
 
     (
       SELECT COALESCE(

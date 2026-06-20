@@ -502,14 +502,8 @@ const getVendorServices = async (req, res) => {
         sm.default_duration_minutes as duration_minutes,
         sm.category,
         vs.is_available,
-<<<<<<< HEAD
         sm.document_url,
         vs.created_at
-=======
-        sm.image_url,
-        vs.created_at,
-        vs.updated_at
->>>>>>> 420b244 (Fixes in auth)
       FROM vendor_services vs
       INNER JOIN services_master sm ON vs.service_id = sm.service_id
       WHERE vs.vendor_id = $1 
@@ -1714,10 +1708,7 @@ const uploadShopGalleryImages = [
 
     try {
       const vendorId = req.user.userId;
-<<<<<<< HEAD
       const { document_type } = req.body; // 'shop' or 'portfolio'
-=======
->>>>>>> 420b244 (Fixes in auth)
 
       if (!req.files || req.files.length === 0) {
         return res.status(400).json({
@@ -1755,20 +1746,11 @@ const uploadShopGalleryImages = [
         const isPrimary = i === 0 && currentCount.rows[0].count === '0';
 
         const result = await client.query(
-<<<<<<< HEAD
           `INSERT INTO vendor_documents (
             vendor_id, document_url, document_type, status, updated_at
           ) VALUES ($1, $2, $3, 'active', NOW())
           RETURNING document_id, document_url`,
           [vendorId, imageUrl, document_type || 'shop']
-=======
-            `INSERT INTO vendor_documents (
-            vendor_id, document_url, document_type, is_primary,
-            verification_status, created_at, updated_at
-          ) VALUES ($1, $2, 'shop_gallery_image', $3, 'approved', NOW(), NOW())
-          RETURNING *`,
-            [vendorId, imageUrl, isPrimary]
->>>>>>> 420b244 (Fixes in auth)
         );
 
         uploadedImages.push(result.rows[0]);
@@ -1802,21 +1784,11 @@ const getVendorImages = async (req, res) => {
     const vendorId = req.user.userId;
 
     const result = await db.query(
-<<<<<<< HEAD
       `SELECT document_id, document_url, document_type, updated_at
        FROM vendor_documents
        WHERE vendor_id = $1 AND status = 'active'
        ORDER BY updated_at DESC`,
       [vendorId]
-=======
-        `SELECT document_id, document_url, document_type, is_primary, created_at
-       FROM vendor_documents
-       WHERE vendor_id = $1 
-         AND document_type IN ('shop_profile_image', 'shop_gallery_image')
-         AND status = 'active'
-       ORDER BY is_primary DESC, created_at DESC`,
-        [vendorId]
->>>>>>> 420b244 (Fixes in auth)
     );
 
     res.json({
@@ -1843,13 +1815,8 @@ const deleteVendorImage = async (req, res) => {
 
     // Get image details
     const image = await db.query(
-<<<<<<< HEAD
       'SELECT document_url FROM vendor_documents WHERE document_id = $1 AND vendor_id = $2 AND status = $3',
       [document_id, vendorId, 'active']
-=======
-        'SELECT document_url FROM vendor_documents WHERE document_id = $1 AND vendor_id = $2 AND status = $3',
-        [image_id, vendorId, 'active']
->>>>>>> 420b244 (Fixes in auth)
     );
 
     if (image.rows.length === 0) {
@@ -1861,17 +1828,10 @@ const deleteVendorImage = async (req, res) => {
 
     // Soft delete
     await db.query(
-<<<<<<< HEAD
       `UPDATE vendor_documents 
        SET status = 'inactive', deleted_at = NOW()
        WHERE document_id = $1`,
       [document_id]
-=======
-        `UPDATE vendor_documents 
-       SET status = 'inactive', deleted_at = NOW()
-       WHERE document_id = $1`,
-        [image_id]
->>>>>>> 420b244 (Fixes in auth)
     );
 
     // Optional: Delete physical file

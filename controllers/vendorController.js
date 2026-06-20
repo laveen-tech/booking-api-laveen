@@ -664,51 +664,60 @@ const addCustomService = async (req, res) => {
       });
     }
 
-    // Insert into services_master as a vendor-specific custom service
-    // Schema columns: service_name, service_description, default_duration_minutes, service_type, status
+    // Upsert into services_master — reuse existing entry if name already taken
     const masterResult = await db.query(
         `INSERT INTO services_master (
-        service_name,
-        service_description,
-        default_duration_minutes,
-        service_type,
-        status,
-        created_at,
-        updated_at
-      ) VALUES ($1, $2, 30, 'custom', 'active', NOW(), NOW())
-      RETURNING service_id`,
-        [
-          service_name.trim(),
-          description || null,
-        ]
+          service_name,
+          service_description,
+          default_duration_minutes,
+          service_type,
+          status,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, 30, 'custom', 'active', NOW(), NOW())
+        ON CONFLICT (service_name) DO UPDATE
+          SET updated_at = NOW()
+        RETURNING service_id`,
+        [service_name.trim(), description || null]
     );
 
     const newServiceId = masterResult.rows[0].service_id;
 
-    // Now link it to the vendor in vendor_services
-    const vendorServiceResult = await db.query(
-        `INSERT INTO vendor_services (
-        vendor_id,
-        service_id,
-        price,
-        is_available,
-        status,
-        created_at
-      ) VALUES ($1, $2, $3, $4, 'active', NOW())
-      RETURNING vendor_service_id`,
-        [
-          vendorId,
-          newServiceId,
-          parseFloat(price),
-          is_available !== false
-        ]
+    // Check if vendor already has this service linked
+    const existing = await db.query(
+        `SELECT vendor_service_id FROM vendor_services
+         WHERE vendor_id = $1 AND service_id = $2`,
+        [vendorId, newServiceId]
     );
+
+    let vendorServiceId;
+    if (existing.rows.length > 0) {
+      // Already linked — update price & availability
+      const updated = await db.query(
+          `UPDATE vendor_services
+           SET price = $1, is_available = $2, status = 'active', updated_at = NOW()
+           WHERE vendor_id = $3 AND service_id = $4
+           RETURNING vendor_service_id`,
+          [parseFloat(price), is_available !== false, vendorId, newServiceId]
+      );
+      vendorServiceId = updated.rows[0].vendor_service_id;
+    } else {
+      // New link
+      const inserted = await db.query(
+          `INSERT INTO vendor_services (
+            vendor_id, service_id, price, is_available, status, created_at
+          ) VALUES ($1, $2, $3, $4, 'active', NOW())
+          RETURNING vendor_service_id`,
+          [vendorId, newServiceId, parseFloat(price), is_available !== false]
+      );
+      vendorServiceId = inserted.rows[0].vendor_service_id;
+    }
 
     res.status(201).json({
       success: true,
       message: 'Custom service added successfully.',
       data: {
-        vendor_service_id: vendorServiceResult.rows[0].vendor_service_id,
+        vendor_service_id: vendorServiceId,
         service_id: newServiceId,
         service_name: service_name.trim(),
         price: parseFloat(price),

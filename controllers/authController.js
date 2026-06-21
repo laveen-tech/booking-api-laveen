@@ -384,7 +384,7 @@ const getProfile = async (req, res) => {
         `SELECT u.user_id, u.phone_number, u.email, u.user_type as role, u.status,
               u.phone_verified, u.created_at,
               up.name, up.city, up.state, up.gender, up.profile_picture, up.last_login_at,
-              vsd.shop_id
+              vsd.shop_id, vsd.verification_status as shop_verification_status
        FROM users u
        LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
        LEFT JOIN vendor_shop_details vsd ON u.user_id = vsd.user_id
@@ -396,7 +396,41 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    res.json({ success: true, message: 'Profile fetched', data: result.rows[0] });
+    const userData = result.rows[0];
+
+    // ── VENDOR: append onboarding status ────────────────────────────────
+    let vendorFields = {};
+    if (userData.role === 'VENDOR') {
+      const hasShop = !!userData.shop_id;
+      const verificationStatusStr = userData.shop_verification_status || 'pending';
+      const verificationStatusInt =
+        verificationStatusStr === 'approved' ? 1
+        : verificationStatusStr === 'rejected' ? 2
+        : 0;
+
+      let hasServices = false;
+      if (hasShop) {
+        const svcRow = await db.query(
+          `SELECT 1 FROM vendor_services
+           WHERE vendor_id = $1 AND status = 'active'
+           LIMIT 1`,
+          [userId]
+        );
+        hasServices = svcRow.rows.length > 0;
+      }
+
+      const onboardingStep = !hasShop ? 1 : !hasServices ? 2 : 3;
+      vendorFields = {
+        onboarding_completed: hasShop && hasServices,
+        onboarding_step: onboardingStep,
+        verification_status: verificationStatusInt,
+      };
+    }
+
+    // Remove internal field before sending
+    delete userData.shop_verification_status;
+
+    res.json({ success: true, message: 'Profile fetched', data: { ...userData, ...vendorFields } });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ success: false, message: 'Error fetching profile.', error: error.message });

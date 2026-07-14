@@ -61,9 +61,11 @@ const sendOTP = async (req, res) => {
       });
     }
 
+    const stripped_p = phone_number.replace(/^\+91/, '');
+    const e164_p = '+91' + stripped_p;
     const existingUser = await db.query(
-        'SELECT user_id, user_type, status FROM users WHERE phone_number = $1',
-        [phone_number]
+        'SELECT user_id, user_type, status FROM users WHERE phone_number = $1 OR phone_number = $2',
+        [phone_number, stripped_p === phone_number ? e164_p : stripped_p]
     );
 
     let userExists = false, userType = null, userStatus = null;
@@ -206,51 +208,6 @@ const verifyOTP = async (req, res) => {
           [userId]
       );
 
-      // ── VENDOR: compute onboarding status so the app routes correctly ──
-      let vendorOnboardingFields = {};
-      if (finalUserType === 'VENDOR') {
-        const shopRow = await client.query(
-          `SELECT shop_id, verification_status
-           FROM vendor_shop_details
-           WHERE user_id = $1
-           LIMIT 1`,
-          [userId]
-        );
-
-        const hasShop = shopRow.rows.length > 0;
-        const shopId = hasShop ? shopRow.rows[0].shop_id : null;
-        const verificationStatusStr = hasShop ? shopRow.rows[0].verification_status : 'pending';
-
-        // Map string status → int expected by Flutter User model
-        // 'approved' → 1, 'rejected' → 2, 'pending' / anything else → 0
-        const verificationStatusInt =
-          verificationStatusStr === 'approved' ? 1
-          : verificationStatusStr === 'rejected' ? 2
-          : 0;
-
-        let hasServices = false;
-        if (hasShop) {
-          const svcRow = await client.query(
-            `SELECT 1 FROM vendor_services
-             WHERE vendor_id = $1 AND status = 'active'
-             LIMIT 1`,
-            [userId]
-          );
-          hasServices = svcRow.rows.length > 0;
-        }
-
-        // onboarding_step: 1 = no shop yet, 2 = shop done but no services, 3 = fully complete
-        const onboardingStep = !hasShop ? 1 : !hasServices ? 2 : 3;
-        const onboardingCompleted = hasShop && hasServices;
-
-        vendorOnboardingFields = {
-          shop_id: shopId,
-          onboarding_step: onboardingStep,
-          onboarding_completed: onboardingCompleted,
-          verification_status: verificationStatusInt,
-        };
-      }
-
       await client.query('COMMIT');
 
       // B15: embed device_id in JWT
@@ -269,7 +226,6 @@ const verifyOTP = async (req, res) => {
           profile_picture: userData.profile_picture,
           role: finalUserType,
           created_at: userData.created_at,
-          ...vendorOnboardingFields,
         },
         token,
       };
@@ -384,7 +340,7 @@ const getProfile = async (req, res) => {
         `SELECT u.user_id, u.phone_number, u.email, u.user_type as role, u.status,
               u.phone_verified, u.created_at,
               up.name, up.city, up.state, up.gender, up.profile_picture, up.last_login_at,
-              vsd.shop_id, vsd.verification_status as shop_verification_status
+              vsd.shop_id
        FROM users u
        LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
        LEFT JOIN vendor_shop_details vsd ON u.user_id = vsd.user_id
@@ -396,41 +352,7 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    const userData = result.rows[0];
-
-    // ── VENDOR: append onboarding status ────────────────────────────────
-    let vendorFields = {};
-    if (userData.role === 'VENDOR') {
-      const hasShop = !!userData.shop_id;
-      const verificationStatusStr = userData.shop_verification_status || 'pending';
-      const verificationStatusInt =
-        verificationStatusStr === 'approved' ? 1
-        : verificationStatusStr === 'rejected' ? 2
-        : 0;
-
-      let hasServices = false;
-      if (hasShop) {
-        const svcRow = await db.query(
-          `SELECT 1 FROM vendor_services
-           WHERE vendor_id = $1 AND status = 'active'
-           LIMIT 1`,
-          [userId]
-        );
-        hasServices = svcRow.rows.length > 0;
-      }
-
-      const onboardingStep = !hasShop ? 1 : !hasServices ? 2 : 3;
-      vendorFields = {
-        onboarding_completed: hasShop && hasServices,
-        onboarding_step: onboardingStep,
-        verification_status: verificationStatusInt,
-      };
-    }
-
-    // Remove internal field before sending
-    delete userData.shop_verification_status;
-
-    res.json({ success: true, message: 'Profile fetched', data: { ...userData, ...vendorFields } });
+    res.json({ success: true, message: 'Profile fetched', data: result.rows[0] });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ success: false, message: 'Error fetching profile.', error: error.message });
@@ -612,9 +534,13 @@ const checkUser = async (req, res) => {
       });
     }
 
+    // Normalize: handle both +91XXXXXXXXXX and XXXXXXXXXX formats
+    const stripped = phone_number.replace(/^\+91/, '');      // 9876543211
+    const e164    = '+91' + stripped;                        // +919876543211
+
     const result = await db.query(
-        'SELECT user_id, user_type, status FROM users WHERE phone_number = $1',
-        [phone_number]
+        'SELECT user_id, user_type, status FROM users WHERE phone_number = $1 OR phone_number = $2',
+        [phone_number, stripped === phone_number ? e164 : stripped]
     );
 
     if (result.rows.length === 0) {

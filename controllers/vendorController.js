@@ -490,8 +490,14 @@ const getAllServicesMaster = async (req, res) => {
         `SELECT
         service_id,
         service_name,
-        service_description AS description,
-        default_duration_minutes AS duration_minutes,
+        service_description as description,
+        default_duration_minutes as duration_minutes,
+        base_price,
+        category,
+        is_available,
+        image_url,
+        requirements,
+        benefits,
         service_type,
         status
       FROM services_master
@@ -644,16 +650,18 @@ const addCustomService = async (req, res) => {
     const vendorId = req.user.userId;
     const {
       service_name,
+      category,
       price,
+      duration,          // duration_minutes
       description,
       is_available
     } = req.body;
 
-    // Validation — duration is fixed at 30 minutes per business rules
-    if (!service_name || !price) {
+    // Validation
+    if (!service_name || !category || !price || !duration) {
       return res.status(400).json({
         success: false,
-        message: 'service_name and price are required.'
+        message: 'service_name, category, price, and duration are required.'
       });
     }
 
@@ -664,64 +672,69 @@ const addCustomService = async (req, res) => {
       });
     }
 
-    // Upsert into services_master — reuse existing entry if name already taken
+    if (isNaN(duration) || parseInt(duration) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Duration must be a positive integer (minutes).'
+      });
+    }
+
+    // Insert into services_master as a vendor-specific custom service
     const masterResult = await db.query(
         `INSERT INTO services_master (
-          service_name,
-          service_description,
-          default_duration_minutes,
-          service_type,
-          status,
-          created_at,
-          updated_at
-        ) VALUES ($1, $2, 30, 'custom', 'active', NOW(), NOW())
-        ON CONFLICT (service_name) DO UPDATE
-          SET updated_at = NOW()
-        RETURNING service_id`,
-        [service_name.trim(), description || null]
+        service_name,
+        service_description,
+        default_duration_minutes,
+        base_price,
+        category,
+        is_available,
+        service_type,
+        status,
+  
+        created_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, true, 'custom', 'active', NOW(), NOW())
+      RETURNING service_id`,
+        [
+          service_name.trim(),
+          description || null,
+          parseInt(duration),
+          parseFloat(price),
+          category.trim(),
+        ]
     );
 
     const newServiceId = masterResult.rows[0].service_id;
 
-    // Check if vendor already has this service linked
-    const existing = await db.query(
-        `SELECT vendor_service_id FROM vendor_services
-         WHERE vendor_id = $1 AND service_id = $2`,
-        [vendorId, newServiceId]
+    // Now link it to the vendor in vendor_services
+    const vendorServiceResult = await db.query(
+        `INSERT INTO vendor_services (
+        vendor_id,
+        service_id,
+        price,
+        is_available,
+        status,
+        created_at
+      ) VALUES ($1, $2, $3, $4, 'active', NOW())
+      RETURNING vendor_service_id`,
+        [
+          vendorId,
+          newServiceId,
+          parseFloat(price),
+          is_available !== false
+        ]
     );
-
-    let vendorServiceId;
-    if (existing.rows.length > 0) {
-      // Already linked — update price & availability
-      const updated = await db.query(
-          `UPDATE vendor_services
-           SET price = $1, is_available = $2, status = 'active', updated_at = NOW()
-           WHERE vendor_id = $3 AND service_id = $4
-           RETURNING vendor_service_id`,
-          [parseFloat(price), is_available !== false, vendorId, newServiceId]
-      );
-      vendorServiceId = updated.rows[0].vendor_service_id;
-    } else {
-      // New link
-      const inserted = await db.query(
-          `INSERT INTO vendor_services (
-            vendor_id, service_id, price, is_available, status, created_at
-          ) VALUES ($1, $2, $3, $4, 'active', NOW())
-          RETURNING vendor_service_id`,
-          [vendorId, newServiceId, parseFloat(price), is_available !== false]
-      );
-      vendorServiceId = inserted.rows[0].vendor_service_id;
-    }
 
     res.status(201).json({
       success: true,
       message: 'Custom service added successfully.',
       data: {
-        vendor_service_id: vendorServiceId,
+        vendor_service_id: vendorServiceResult.rows[0].vendor_service_id,
         service_id: newServiceId,
         service_name: service_name.trim(),
+        category: category.trim(),
         price: parseFloat(price),
-        duration_minutes: 30,
+        duration_minutes: parseInt(duration),
         is_available: is_available !== false
       }
     });
@@ -1304,7 +1317,7 @@ const completeBooking = async (req, res) => {
     const { actual_amount } = req.body;
 
     const booking = await db.query(
-        `SELECT booking_id, user_id, booking_status, total_amount, booking_date, booking_time
+        `SELECT booking_id, user_id, booking_status, total_amount
        FROM bookings
        WHERE booking_id = $1 AND vendor_id = $2 AND status = 'active'`,
         [bookingId, vendorId]
@@ -1314,27 +1327,12 @@ const completeBooking = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
-    const { booking_status, user_id: customerId, total_amount, booking_date, booking_time } = booking.rows[0];
+    const { booking_status, user_id: customerId, total_amount } = booking.rows[0];
 
     if (booking_status !== 'confirmed') {
       return res.status(400).json({
         success: false,
         message: `Can only complete confirmed bookings. Current status: ${booking_status}`,
-      });
-    }
-
-    // BUG 30: Prevent completing booking before its start time
-    const now = new Date();
-    const bookingStart = new Date(
-      (booking_date instanceof Date
-        ? booking_date.toISOString().split('T')[0]
-        : String(booking_date).split('T')[0])
-      + 'T' + booking_time
-    );
-    if (now < bookingStart) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot complete booking before its start time.'
       });
     }
 
@@ -2221,7 +2219,6 @@ const uploadShopGalleryImages = [
 
     try {
       const vendorId = req.user.userId;
-
       const { document_type } = req.body; // 'shop' or 'portfolio'
 
       if (!req.files || req.files.length === 0) {
@@ -2261,6 +2258,7 @@ const uploadShopGalleryImages = [
 
         // Gallery images start as 'pending' until admin approves
         const result = await client.query(
+
             `INSERT INTO vendor_documents (
             vendor_id, document_url, document_type, is_primary,
             verification_status, created_at, updated_at

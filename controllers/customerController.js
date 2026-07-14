@@ -155,11 +155,10 @@ const getAllShops = async (req, res) => {
         vm.average_rating,
         vm.total_reviews,
         vm.total_bookings,
-        (SELECT document_url FROM vendor_documents
-         WHERE vendor_id = u.user_id
+        (SELECT document_url FROM vendor_documents 
+         WHERE vendor_id = u.user_id 
            AND document_type IN ('shop_profile_image', 'shop_gallery_image')
-           AND status = 'active'
-           AND verification_status = 'approved'
+           AND status = 'active' 
          ORDER BY is_primary DESC, created_at DESC
          LIMIT 1) as profile_image,
         (SELECT COUNT(*) FROM vendor_services vs 
@@ -418,6 +417,20 @@ const getAvailableSlots = async (req, res) => {
     }
 
     const result = await _getSlots(shopId, date);
+    // Get shop details
+    const shop = await db.query(
+      `SELECT 
+        user_id,
+        open_time,
+        close_time,
+        break_start_time,
+        break_end_time,
+        weekly_holiday,
+        no_of_seats
+      FROM vendor_shop_details
+      WHERE shop_id = $1`,
+        [shopId]
+    );
 
     if (result.error) {
       return res.status(404).json({ success: false, message: result.error });
@@ -578,6 +591,10 @@ const getAvailableSlots = async (req, res) => {
 // };
 
 
+
+// ============================================
+// BOOKING MANAGEMENT
+// ============================================
 // ============================================
 // BOOKING MANAGEMENT
 // ============================================
@@ -641,16 +658,6 @@ const createBooking = async (req, res) => {
         success: false,
         message: `booking_date, booking_time, and at least one valid service are required. ` +
             `Received: date=${booking_date}, time=${timeSlot}, services=${JSON.stringify(req.body.services)}`,
-      });
-    }
-
-    // BUG 28: Prevent booking past time slots
-    const now = new Date();
-    const bookingDateTime = new Date(booking_date + 'T' + timeSlot);
-    if (bookingDateTime < now) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot book past time slots. Please select a future date and time.'
       });
     }
 
@@ -1108,26 +1115,12 @@ const getMyBookings = async (req, res) => {
        WHERE bs.booking_id = b.booking_id AND bs.status = 'active'),
       0
     ) AS total_duration,
-
-    (
-      SELECT row_to_json(rev)
-      FROM (
-        SELECT
-          true                AS has_reviewed,
-          r.rating            AS rating,
-          r.review_text       AS review_text
-        FROM reviews r
-        WHERE r.booking_id = b.booking_id
-          AND r.status = 'active'
-        LIMIT 1
-      ) rev
-    ) AS review_info,
-
+    
     (
       SELECT COALESCE(
         (SELECT json_agg(svc)
          FROM (
-           SELECT
+           SELECT 
              json_build_object(
                'service_id', bs.service_id,
                'service_name', bs.service_name,
@@ -1137,7 +1130,7 @@ const getMyBookings = async (req, res) => {
                'end_time', bs.end_time::TEXT
              ) AS svc
            FROM booking_services bs
-           WHERE bs.booking_id = b.booking_id
+           WHERE bs.booking_id = b.booking_id 
              AND bs.status = 'active'
            ORDER BY bs.start_time
          ) ordered_services

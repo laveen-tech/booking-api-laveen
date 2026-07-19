@@ -42,6 +42,8 @@ const getVendorProfile = async (req, res) => {
         vs.shop_address,
         vs.city as shop_city,
         vs.state as shop_state,
+        vs.pincode,
+        vs.shop_description AS description,
         vs.latitude,
         vs.longitude,
         vs.open_time,
@@ -80,9 +82,10 @@ const getVendorProfile = async (req, res) => {
 
     // Get shop images
     const images = await db.query(
-        `SELECT document_id, document_url, document_type, is_primary
+        `SELECT document_id, document_url, document_type, is_primary,
+              verification_status, admin_comments
        FROM vendor_documents
-       WHERE vendor_id = $1 
+       WHERE vendor_id = $1
          AND document_type IN ('shop_profile_image', 'shop_gallery_image')
          AND status = 'active'
        ORDER BY is_primary DESC, created_at DESC`,
@@ -190,6 +193,8 @@ const getVendorShop = async (req, res) => {
       shop_address,
       city,
       state,
+      pincode,
+      shop_description AS description,
       latitude,
       longitude,
       open_time,
@@ -211,7 +216,7 @@ const getVendorShop = async (req, res) => {
       created_at,
       updated_at,
       deleted_at
-   FROM vendor_shop_details 
+   FROM vendor_shop_details
    WHERE user_id = $1`,
         [vendorId]
     );
@@ -256,7 +261,7 @@ const createOrUpdateVendorShop = async (req, res) => {
   try {
     const vendorId = req.user.userId;
     const {
-      shop_name, shop_address, city, state,
+      shop_name, shop_address, city, state, pincode, description,
       latitude, longitude, open_time, close_time,
       break_start_time, break_end_time, weekly_holiday,
       no_of_seats, no_of_workers, business_license,
@@ -288,8 +293,9 @@ const createOrUpdateVendorShop = async (req, res) => {
     break_start_time = $9, break_end_time = $10, weekly_holiday = $11,
     no_of_seats = $12, no_of_workers = $13, business_license = $14,
     tax_number = $15, bank_account_number = $16, bank_ifsc_code = $17,
+    pincode = $18, shop_description = $19,
     updated_at = NOW()
-  WHERE user_id = $18
+  WHERE user_id = $20
   RETURNING
     shop_id,
     user_id AS vendor_id,
@@ -299,6 +305,7 @@ const createOrUpdateVendorShop = async (req, res) => {
     no_of_seats, no_of_workers,
     verification_status, admin_comments,
     business_license, tax_number, bank_account_number, bank_ifsc_code,
+    pincode, shop_description AS description,
     status, created_at, updated_at`,
           [
             shop_name, shop_address, city, state,
@@ -306,6 +313,7 @@ const createOrUpdateVendorShop = async (req, res) => {
             break_start_time || null, break_end_time || null, weekly_holiday || null,
             no_of_seats || 1, no_of_workers || 1, business_license || null,
             tax_number || null, bank_account_number || null, bank_ifsc_code || null,
+            pincode || null, description || null,
             vendorId
           ]
       );
@@ -355,15 +363,17 @@ const createOrUpdateVendorShop = async (req, res) => {
           break_start_time, break_end_time, weekly_holiday,
           no_of_seats, no_of_workers, business_license,
           tax_number, bank_account_number, bank_ifsc_code,
+          pincode, shop_description,
           verification_status, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'pending', NOW(), NOW())
-        RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'pending', NOW(), NOW())
+        RETURNING *, shop_description AS description`,
           [
             vendorId, shop_name, shop_address, city, state,
             latitude, longitude, open_time, close_time,
             break_start_time, break_end_time, weekly_holiday,
             no_of_seats || 1, no_of_workers || 1, business_license,
-            tax_number, bank_account_number, bank_ifsc_code
+            tax_number, bank_account_number, bank_ifsc_code,
+            pincode || null, description || null
           ]
       );
 
@@ -490,14 +500,8 @@ const getAllServicesMaster = async (req, res) => {
         `SELECT
         service_id,
         service_name,
-        service_description as description,
-        default_duration_minutes as duration_minutes,
-        base_price,
-        category,
-        is_available,
-        image_url,
-        requirements,
-        benefits,
+        service_description AS description,
+        default_duration_minutes AS duration_minutes,
         service_type,
         status
       FROM services_master
@@ -650,18 +654,16 @@ const addCustomService = async (req, res) => {
     const vendorId = req.user.userId;
     const {
       service_name,
-      category,
       price,
-      duration,          // duration_minutes
       description,
       is_available
     } = req.body;
 
-    // Validation
-    if (!service_name || !category || !price || !duration) {
+    // Validation — duration is fixed at 30 minutes per business rules
+    if (!service_name || !price) {
       return res.status(400).json({
         success: false,
-        message: 'service_name, category, price, and duration are required.'
+        message: 'service_name and price are required.'
       });
     }
 
@@ -672,69 +674,64 @@ const addCustomService = async (req, res) => {
       });
     }
 
-    if (isNaN(duration) || parseInt(duration) <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Duration must be a positive integer (minutes).'
-      });
-    }
-
-    // Insert into services_master as a vendor-specific custom service
+    // Upsert into services_master — reuse existing entry if name already taken
     const masterResult = await db.query(
         `INSERT INTO services_master (
-        service_name,
-        service_description,
-        default_duration_minutes,
-        base_price,
-        category,
-        is_available,
-        service_type,
-        status,
-  
-        created_at,
-        updated_at
-      ) VALUES ($1, $2, $3, $4, $5, true, 'custom', 'active', NOW(), NOW())
-      RETURNING service_id`,
-        [
-          service_name.trim(),
-          description || null,
-          parseInt(duration),
-          parseFloat(price),
-          category.trim(),
-        ]
+          service_name,
+          service_description,
+          default_duration_minutes,
+          service_type,
+          status,
+          created_at,
+          updated_at
+        ) VALUES ($1, $2, 30, 'custom', 'active', NOW(), NOW())
+        ON CONFLICT (service_name) DO UPDATE
+          SET updated_at = NOW()
+        RETURNING service_id`,
+        [service_name.trim(), description || null]
     );
 
     const newServiceId = masterResult.rows[0].service_id;
 
-    // Now link it to the vendor in vendor_services
-    const vendorServiceResult = await db.query(
-        `INSERT INTO vendor_services (
-        vendor_id,
-        service_id,
-        price,
-        is_available,
-        status,
-        created_at
-      ) VALUES ($1, $2, $3, $4, 'active', NOW())
-      RETURNING vendor_service_id`,
-        [
-          vendorId,
-          newServiceId,
-          parseFloat(price),
-          is_available !== false
-        ]
+    // Check if vendor already has this service linked
+    const existing = await db.query(
+        `SELECT vendor_service_id FROM vendor_services
+         WHERE vendor_id = $1 AND service_id = $2`,
+        [vendorId, newServiceId]
     );
+
+    let vendorServiceId;
+    if (existing.rows.length > 0) {
+      // Already linked — update price & availability
+      const updated = await db.query(
+          `UPDATE vendor_services
+           SET price = $1, is_available = $2, status = 'active', updated_at = NOW()
+           WHERE vendor_id = $3 AND service_id = $4
+           RETURNING vendor_service_id`,
+          [parseFloat(price), is_available !== false, vendorId, newServiceId]
+      );
+      vendorServiceId = updated.rows[0].vendor_service_id;
+    } else {
+      // New link
+      const inserted = await db.query(
+          `INSERT INTO vendor_services (
+            vendor_id, service_id, price, is_available, status, created_at
+          ) VALUES ($1, $2, $3, $4, 'active', NOW())
+          RETURNING vendor_service_id`,
+          [vendorId, newServiceId, parseFloat(price), is_available !== false]
+      );
+      vendorServiceId = inserted.rows[0].vendor_service_id;
+    }
 
     res.status(201).json({
       success: true,
       message: 'Custom service added successfully.',
       data: {
-        vendor_service_id: vendorServiceResult.rows[0].vendor_service_id,
+        vendor_service_id: vendorServiceId,
         service_id: newServiceId,
         service_name: service_name.trim(),
-        category: category.trim(),
         price: parseFloat(price),
-        duration_minutes: parseInt(duration),
+        duration_minutes: 30,
         is_available: is_available !== false
       }
     });
@@ -1317,7 +1314,7 @@ const completeBooking = async (req, res) => {
     const { actual_amount } = req.body;
 
     const booking = await db.query(
-        `SELECT booking_id, user_id, booking_status, total_amount
+        `SELECT booking_id, user_id, booking_status, total_amount, booking_date, booking_time
        FROM bookings
        WHERE booking_id = $1 AND vendor_id = $2 AND status = 'active'`,
         [bookingId, vendorId]
@@ -1327,12 +1324,27 @@ const completeBooking = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Booking not found.' });
     }
 
-    const { booking_status, user_id: customerId, total_amount } = booking.rows[0];
+    const { booking_status, user_id: customerId, total_amount, booking_date, booking_time } = booking.rows[0];
 
     if (booking_status !== 'confirmed') {
       return res.status(400).json({
         success: false,
         message: `Can only complete confirmed bookings. Current status: ${booking_status}`,
+      });
+    }
+
+    // BUG 30: Prevent completing booking before its start time
+    const now = new Date();
+    const bookingStart = new Date(
+      (booking_date instanceof Date
+        ? booking_date.toISOString().split('T')[0]
+        : String(booking_date).split('T')[0])
+      + 'T' + booking_time
+    );
+    if (now < bookingStart) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot complete booking before its start time.'
       });
     }
 
@@ -2074,8 +2086,11 @@ const getDashboardStats = async (req, res) => {
       FROM bookings b
       LEFT JOIN users u ON b.user_id = u.user_id
       LEFT JOIN user_profiles up ON u.user_id = up.user_id AND up.is_current = true
-      WHERE b.vendor_id = $1 
-        AND b.booking_date >= CURRENT_DATE
+      WHERE b.vendor_id = $1
+        AND (
+          b.booking_date > CURRENT_DATE
+          OR (b.booking_date = CURRENT_DATE AND b.booking_time > CURRENT_TIME)
+        )
         AND b.booking_status IN ('confirmed', 'pending')
         AND b.status = 'active'
       ORDER BY b.booking_date ASC, b.booking_time ASC
@@ -2219,6 +2234,7 @@ const uploadShopGalleryImages = [
 
     try {
       const vendorId = req.user.userId;
+
       const { document_type } = req.body; // 'shop' or 'portfolio'
 
       if (!req.files || req.files.length === 0) {
@@ -2258,7 +2274,6 @@ const uploadShopGalleryImages = [
 
         // Gallery images start as 'pending' until admin approves
         const result = await client.query(
-
             `INSERT INTO vendor_documents (
             vendor_id, document_url, document_type, is_primary,
             verification_status, created_at, updated_at
@@ -2298,9 +2313,10 @@ const getVendorImages = async (req, res) => {
     const vendorId = req.user.userId;
 
     const result = await db.query(
-        `SELECT document_id, document_url, document_type, is_primary, created_at
+        `SELECT document_id, document_url, document_type, is_primary,
+              verification_status, admin_comments, created_at
        FROM vendor_documents
-       WHERE vendor_id = $1 
+       WHERE vendor_id = $1
          AND document_type IN ('shop_profile_image', 'shop_gallery_image')
          AND status = 'active'
        ORDER BY is_primary DESC, created_at DESC`,

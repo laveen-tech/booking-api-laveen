@@ -779,6 +779,16 @@ const createBooking = async (req, res) => {
 
     await client.query('COMMIT');
 
+    // 🔔 Notify vendor — fire-and-forget so the customer response isn't delayed
+    _notifyVendorNewBooking({
+      vendorId:       vendorIdInt,
+      bookingId,
+      customerId,
+      serviceDetails,
+      timeSlot,
+      bookingDate:    booking_date,
+    });
+
     // Fetch full booking for response
     const bookingData = await db.query(
         `SELECT 
@@ -1767,9 +1777,8 @@ const _notifyVendorNewBooking = async ({
     // Common schemas use: user_id | vendor_id | title | message | notification_type
     await db.query(
         `INSERT INTO notifications
-         (vendor_id, title, message, notification_type, is_read, created_at)
-       VALUES ($1, $2, $3, 'new_booking', false, NOW())
-       ON CONFLICT DO NOTHING`,
+         (user_id, title, message, notification_type, is_read, created_at)
+       VALUES ($1, $2, $3, 'new_booking', false, NOW())`,
         [vendorId, notifTitle, notifBody]
     ).catch(dbErr => {
       // Non-fatal — notification insert should never break bookings

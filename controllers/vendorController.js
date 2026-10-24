@@ -2391,43 +2391,40 @@ const deleteVendorImage = async (req, res) => {
 const setPrimaryImage = async (req, res) => {
   try {
     const vendorId = req.user.userId;
-    const { image_id } = req.params;
+    // Route is /shop/images/:document_id/primary
+    const documentId = Number(req.params.document_id);
 
-    // Check if image exists
+    if (!documentId) {
+      return res.status(400).json({ success: false, message: 'Valid image id is required.' });
+    }
+
+    // Image must belong to this vendor, be a shop image, and not be deleted
     const image = await db.query(
-        `SELECT document_id FROM vendor_documents 
-       WHERE document_id = $1 
-         AND vendor_id = $2`,
-        [image_id, vendorId]
+        `SELECT document_id FROM vendor_documents
+       WHERE document_id = $1
+         AND vendor_id = $2
+         AND document_type IN ('shop_profile_image', 'shop_gallery_image')
+         AND status = 'active'`,
+        [documentId, vendorId]
     );
 
     if (image.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Image not found.'
-      });
+      return res.status(404).json({ success: false, message: 'Image not found.' });
     }
 
-    // Remove primary flag from all gallery images
+    // Clear primary on ALL shop images (profile + gallery), then set the new one
     await db.query(
-        `UPDATE vendor_documents 
-       SET is_primary = false
-       WHERE vendor_id = $1 
-         AND document_type = 'shop_gallery_image'`,
-        [vendorId]
-    );
-
-    // Set new primary image
-    await db.query(
-        `UPDATE vendor_documents 
-       SET is_primary = true
-       WHERE document_id = $1`,
-        [image_id]
+        `UPDATE vendor_documents
+       SET is_primary = (document_id = $2)
+       WHERE vendor_id = $1
+         AND document_type IN ('shop_profile_image', 'shop_gallery_image')`,
+        [vendorId, documentId]
     );
 
     res.json({
       success: true,
-      message: 'Primary image updated successfully.'
+      message: 'Primary image updated successfully.',
+      data: { document_id: documentId, is_primary: true }
     });
 
   } catch (error) {
